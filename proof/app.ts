@@ -8,12 +8,12 @@ import { join } from "node:path";
 export const ROOT = join(__dirname, "..");
 export const DEFAULT_URL = process.env.ESHOP_URL ?? "http://localhost:5045";
 const APP_HOST = "src/eShop.AppHost/eShop.AppHost.csproj";
-// What a storefront change touches: the WebApp and the components it renders.
-const SOURCE_PATHS = ["src/WebApp", "src/WebAppComponents"];
+// What a change to the storefront or to the catalog API it reads would touch.
+const SOURCE_PATHS = ["src/WebApp", "src/WebAppComponents", "src/Catalog.API"];
 
 const git = (...args: string[]) => execFileSync("git", args, { cwd: ROOT, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
 
-// eShop serves no revision, so derive one from the source: HEAD plus a hash of uncommitted storefront changes.
+// eShop serves no revision, so derive one from the source: HEAD plus a hash of uncommitted storefront and catalog API changes.
 export async function sourceRevision(): Promise<string | null> {
   try {
     const head = git("rev-parse", "--short", "HEAD").trim();
@@ -22,6 +22,19 @@ export async function sourceRevision(): Promise<string | null> {
     const hash = createHash("sha256").update(diff);
     for (const file of untracked) hash.update(file).update(await readFile(join(ROOT, file)).catch(() => ""));
     return diff || untracked.length ? `${head}+${hash.digest("hex").slice(0, 8)}` : head;
+  } catch { return null; }
+}
+
+// The catalog API is reached through the mobile-bff proxy, whose port Aspire picks at random. ESHOP_API_URL overrides it.
+export function apiUrlFromAspire(): string | null {
+  if (process.env.ESHOP_API_URL) return process.env.ESHOP_API_URL;
+  try {
+    const text = execFileSync("aspire", ["describe", "--format", "Json", "--non-interactive", "--nologo"], {
+      cwd: ROOT, encoding: "utf8", timeout: 15_000, stdio: ["ignore", "pipe", "ignore"],
+    });
+    const described = JSON.parse(text.slice(text.indexOf("{"))) as { resources: { displayName: string; urls?: { name: string; url: string }[] }[] };
+    const bff = described.resources.find(resource => resource.displayName === "mobile-bff");
+    return bff?.urls?.find(url => url.name === "http")?.url ?? null;
   } catch { return null; }
 }
 

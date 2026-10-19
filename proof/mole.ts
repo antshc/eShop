@@ -9,10 +9,11 @@ import { join } from "node:path";
 import { loadEnvFile } from "node:process";
 import { parseArgs } from "node:util";
 import { chromium, expect, type Browser, type Page } from "@playwright/test";
-import { DEFAULT_URL, ROOT, dotnetEnv, reachable, sourceRevision, startApp, type StartedApp } from "./app";
+import { DEFAULT_URL, ROOT, apiUrlFromAspire, dotnetEnv, reachable, sourceRevision, startApp, type StartedApp } from "./app";
 import { JudgeUnavailable, judge } from "./judge";
 import { readStorage, runProof, type Receipt } from "./proof";
-import { featureNames, featuresFor, proveFeatures, selectFeatures } from "./prove";
+import { FEATURES, featureNames, featuresFor, proveFeatures, selectFeatures, surfacesFor } from "./prove";
+import { CATALOG_PATH, SURFACES, SurfaceError, apiSurface, isSurface, webSurface, type Surface, type SurfaceAdapter } from "./features/surfaces";
 
 // MOLE_DIR isolates a second instance (tests, a parallel checkout) from the default one.
 const DIR = process.env.MOLE_DIR ?? join(__dirname, ".runs", "mole");
@@ -24,12 +25,14 @@ const LOCK = join(DIR, "up.lock");
 const APPHOST_LOG = join(DIR, "apphost.log");
 
 const COMMANDS = {
-  up: ["Health", "up [--url URL] [--start] [--headless]", "Open a Chrome you can drive on the storefront. --start also runs the Aspire AppHost. Leave it running in its own terminal."],
+  up: ["Health", "up [--url URL] [--start] [--headless]", "Open a Chrome you can drive on the storefront and find the catalog API. --start also runs the Aspire AppHost. Leave it running in its own terminal."],
   down: ["Health", "down", "Stop what up started (Chrome, and the AppHost if --start)."],
-  doctor: ["Health", "doctor", "Is this instance worth driving? Tools, session, storefront, loaded build, last proof."],
+  doctor: ["Health", "doctor", "Is this instance worth driving? Tools, session, storefront, catalog API, loaded build, last proof."],
+  catalog: ["Drive", "catalog list|facets [--page N] [--brand NAME] [--type NAME] [--surface web|api] [--raw]", "The catalog on a surface: products with total and page, or option counts. Default surface: web. Pages count from 1."],
   open: ["Drive", "open [path]", "Go to a storefront path, like /item/1. Default: the home page."],
   page: ["Drive", "page <n>", "Click page n in the catalog pagination."],
-  product: ["Drive", "product <name|id>", "Open a product from the catalog by its name, or by catalog id."],
+  product: ["Drive", "product [show] <name|id> [--surface web|api] [--raw]", "A product by its catalog name or id, on a surface. Default surface: web, where it opens the page."],
+  api: ["Look", "api get <path>", "Exploration only: GET a path on the API proxy (mobile-bff) and show the answer. No proof depends on it."],
   filter: ["Drive", "filter [--brand NAME] [--type NAME] [--clear]", "Click catalog filter tags (eShop has no text search)."],
   reload: ["Drive", "reload", "Reload the page, like a user."],
   reset: ["Drive", "reset [--dry-run]", "Clear cookies and the app's storage and reload: a fresh visitor."],
@@ -40,7 +43,7 @@ const COMMANDS = {
   screenshot: ["Look", "screenshot [path]", "Save a full-page screenshot."],
   eval: ["Look", "eval <expression>", "Read page state after the user path ran. Not for calling app internals."],
   features: ["Prove", "features [--changed]", "List the features and their maps. --changed: only those your uncommitted changes touch."],
-  prove: ["Prove", "prove [--feature NAME]", "Fresh visitor, proof/features/, a receipt. Exit 0 PASS, 1 FAIL, 2 can't tell. No --feature runs them all."],
+  prove: ["Prove", "prove [--feature NAME] [--surface web|api]", "Fresh visitor, proof/features/, a receipt. Exit 0 PASS, 1 FAIL, 2 can't tell. No flag runs every feature on every surface."],
   judge: ["Prove", "judge", "Optional: ask an LLM whether a product page is consistent and honest. Needs TYPESAFE_API_KEY."],
 } as const;
 type Command = keyof typeof COMMANDS;
@@ -51,7 +54,7 @@ class MoleError extends Error {
 const out = (value: unknown) => console.log(JSON.stringify(value, null, 2));
 const escapeRegExp = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-type Session = { pid: number; appUrl: string; cdpUrl: string; startedApp: boolean; builtRevision: string | null; headless: boolean; startedAt: string };
+type Session = { pid: number; appUrl: string; apiUrl: string | null; cdpUrl: string; startedApp: boolean; builtRevision: string | null; headless: boolean; startedAt: string };
 const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
 // A live pid alone could be a reused one: on Linux, check that it is a mole process.
 const isMole = (pid: number) => {
@@ -144,6 +147,32 @@ async function claimUp() {
   throw new MoleError("Another up is already starting or running here.", "Use it, or stop it first: pnpm mole down");
 }
 
+const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+async function apiAnswers(url: string) {
+  try { await apiSurface(url).catalog.list({}); return true; } catch { return false; }
+}
+
+// The proxy comes up after the storefront, so when mole started the AppHost give it a minute. Not finding it is not fatal: web still works.
+async function findApi(patient: boolean): Promise<string | null> {
+  const deadline = Date.now() + (patient ? 60_000 : 0);
+  for (;;) {
+    const url = apiUrlFromAspire();
+    if (url && await apiAnswers(url)) return url;
+    if (!url && !patient) return null;
+    if (Date.now() >= deadline) return null;
+    await sleep(2000);
+  }
+}
+
+// Where the catalog API answers: what `up` recorded, or look again (the AppHost may have been started after mole).
+async function apiUrlOf(session: Session) {
+  const url = session.apiUrl ?? await findApi(false);
+  if (!url) throw new MoleError("The catalog API was not found. It is reached through the mobile-bff proxy, and Aspire picks its port.",
+    "Run the AppHost, then: pnpm mole down; pnpm mole up. Or set ESHOP_API_URL to the mobile-bff URL (see pnpm mole doctor).");
+  return url;
+}
+
 function freePort(): Promise<number> {
   return new Promise((resolve, reject) => {
     const server = createServer().once("error", reject).listen(0, "127.0.0.1", () => {
@@ -178,6 +207,7 @@ async function up(options: { url: string; start: boolean; headless: boolean }) {
       opened.push(app);
     }
     const builtRevision = await sourceRevision();
+    const apiUrl = await findApi(options.start);
     const port = await freePort();
     const headless = options.headless || Boolean(process.env.CI) || (process.platform === "linux" && !process.env.DISPLAY);
     const context = await chromium.launchPersistentContext(PROFILE, {
@@ -197,9 +227,11 @@ async function up(options: { url: string; start: boolean; headless: boolean }) {
     context.on("page", watch);
     const page = context.pages()[0] ?? await context.newPage();
     await page.goto(options.url);
-    const session: Session = { pid: process.pid, appUrl: options.url, cdpUrl: `http://127.0.0.1:${port}`, startedApp: Boolean(app), builtRevision, headless, startedAt: new Date().toISOString() };
+    const session: Session = { pid: process.pid, appUrl: options.url, apiUrl, cdpUrl: `http://127.0.0.1:${port}`, startedApp: Boolean(app), builtRevision, headless, startedAt: new Date().toISOString() };
     await writeFile(SESSION, JSON.stringify(session, null, 2));
-    out({ ok: true, ...session, ...(app ? { appHostLog: APPHOST_LOG } : {}), next: "Leave this running. In another terminal: pnpm mole doctor" });
+    out({ ok: true, ...session, ...(app ? { appHostLog: APPHOST_LOG } : {}),
+      next: apiUrl ? "Leave this running. In another terminal: pnpm mole doctor"
+        : "Leave this running. The catalog API was not found, so only the web surface works: see pnpm mole doctor" });
 
     let stopping = false;
     const stop = async () => {
@@ -247,6 +279,10 @@ async function doctor() {
     const answering = await reachable(session.appUrl);
     checks.push({ name: "storefront", ok: answering, detail: answering ? "answers" : `no answer at ${session.appUrl}`,
       ...(!answering ? { next: "Start the AppHost, then: pnpm mole down; pnpm mole up (or pnpm mole up --start)" } : {}) });
+    const apiUrl = session.apiUrl ?? await findApi(false);
+    const apiOk = apiUrl !== null && await apiAnswers(apiUrl);
+    checks.push({ name: "api", ok: apiOk, detail: apiOk ? `the catalog API answers at ${apiUrl}${CATALOG_PATH}` : apiUrl ? `no answer from ${apiUrl}` : "the mobile-bff proxy was not found",
+      ...(!apiOk ? { next: "Start the AppHost, then: pnpm mole down; pnpm mole up. Or set ESHOP_API_URL to the mobile-bff URL. Without it only --surface web can be proved." } : {}) });
     const source = await sourceRevision();
     const fresh = source !== null && source === session.builtRevision;
     checks.push({ name: "build", ok: fresh,
@@ -255,28 +291,36 @@ async function doctor() {
     const receipt: Receipt | null = existsSync(RECEIPT) ? JSON.parse(await readFile(RECEIPT, "utf8")) : null;
     proof = !receipt ? { status: "none yet", next: "pnpm mole prove" }
       : receipt.revision !== source ? { status: `STALE: the last receipt says ${receipt.verdict} for ${receipt.revision}, but the source is now ${source}. That proof is for code that no longer exists.`, next: "pnpm mole prove" }
-      : { status: `${receipt.verdict} for the current source (${source}) at ${receipt.at}${receipt.features && receipt.features.length < featureNames().length ? `, only ${receipt.features.join(", ")}: run pnpm mole prove for all` : ""}`, ...(receipt.verdict !== "PASS" ? { next: receipt.next[0] } : {}) };
+      : { status: `${receipt.verdict} for the current source (${source}) at ${receipt.at}${receipt.features && receipt.features.length < featureNames().length ? `, only ${receipt.features.join(", ")}: run pnpm mole prove for all` : ""}${receipt.surfaces && receipt.surfaces.length < SURFACES.length ? `, only the ${receipt.surfaces.join(", ")} surface: run pnpm mole prove with no --surface` : ""}`, ...(receipt.verdict !== "PASS" ? { next: receipt.next[0] } : {}) };
   }
   const ok = checks.every(check => check.ok);
   out({ ok, checks, proof });
   if (!ok) process.exitCode = 1;
 }
 
-async function prove(features: string[]) {
+async function prove(features: string[], surfaceNames: string[]) {
   let selected: string[];
-  try { selected = selectFeatures(features); } catch (error) {
-    throw new MoleError((error as Error).message, "See them: pnpm mole features");
+  let surfaces: Surface[];
+  try {
+    selected = selectFeatures(features);
+    surfaces = surfacesFor(selected, surfaceNames);
+  } catch (error) {
+    throw new MoleError((error as Error).message, "See the features: pnpm mole features. The surfaces are: " + SURFACES.join(", "));
   }
   const receipt = await withPage(async (_page, browser, session) => {
+    const apiUrl = surfaces.includes("api") ? await apiUrlOf(session) : null;
     const source = await sourceRevision();
     if (source !== session.builtRevision) throw new MoleError(
       `The running build was started on ${session.builtRevision} but the source is now ${source}. A proof would describe code that is not running.`,
       session.startedApp ? "Restart it: pnpm mole down; pnpm mole up --start" : "Restart the AppHost, then: pnpm mole down; pnpm mole up");
     // One screenshot per run, so each saved receipt keeps the image it was proved with.
-    return runProof(browser, session.appUrl, proveFeatures(selected), join(DIR, `proof-${source}-${Date.now()}.png`), sourceRevision);
+    return runProof(browser, session.appUrl, proveFeatures(selected), join(DIR, `proof-${source}-${Date.now()}.png`), sourceRevision, { surfaces, apiUrl });
   });
   receipt.features = selected;
+  receipt.surfaces = surfaces;
   if (selected.length < featureNames().length) receipt.next.push(`Only ${selected.join(", ")} was proved. Run pnpm mole prove with no --feature before you report.`);
+  const skipped = SURFACES.filter(surface => !surfaces.includes(surface) && selected.some(name => FEATURES[name].surfaces.includes(surface)));
+  if (skipped.length) receipt.next.push(`The ${skipped.join(", ")} surface did not run, so it is not proved. Run pnpm mole prove with no --surface before you report.`);
   const json = JSON.stringify(receipt, null, 2);
   await writeFile(RECEIPT, json); // latest, for doctor
   // Append, never overwrite: failures stay in the history next to the final green.
@@ -293,7 +337,7 @@ function listFeatures(changed: boolean) {
   const names = changed ? featuresFor(files) : featureNames();
   out({
     ...(changed ? { changedFiles: files.length } : {}),
-    features: names.map(name => ({ name, map: `.github/skills/verify-mole/features/${name}.md`, prove: `pnpm mole prove --feature ${name}` })),
+    features: names.map(name => ({ name, surfaces: FEATURES[name].surfaces, map: `.github/skills/verify-mole/features/${name}.md`, prove: `pnpm mole prove --feature ${name}` })),
     next: !changed ? "Open the map of the feature you are touching, then: pnpm mole prove --feature <name>"
       : names.length ? `Prove each, then run pnpm mole prove with no --feature once before you report.` : "No feature's files changed. Run pnpm mole prove if you still need proof.",
   });
@@ -340,6 +384,33 @@ async function judgeProduct() {
   process.exitCode = judgment.verdict === "PASS" ? 0 : judgment.verdict === "FAIL" ? 1 : 2;
 }
 
+// The surface a drive command runs on: web unless told otherwise, and the answer says which.
+function oneSurface(names: string[] | undefined): Surface {
+  if ((names?.length ?? 0) > 1) throw new MoleError("Give one --surface.", `One of: ${SURFACES.join(", ")}. To run all of them: pnpm mole prove`);
+  const name = names?.[0] ?? "web";
+  if (!isSurface(name)) throw new MoleError(`Unknown surface "${name}".`, `Use one of: ${SURFACES.join(", ")}`);
+  return name;
+}
+
+async function driveOn<T extends object>(values: { surface?: string[] }, fn: (adapter: SurfaceAdapter, page?: Page) => Promise<T>) {
+  const surface = oneSurface(values.surface);
+  try {
+    const result = surface === "api"
+      ? await fn(apiSurface(await apiUrlOf(await readSession())))
+      : await withPage(page => fn(webSurface(page), page));
+    const other = SURFACES.find(name => name !== surface);
+    return { ...result, next: `The same call on the ${other} surface: add --surface ${other}` };
+  } catch (error) {
+    if (error instanceof SurfaceError) throw new MoleError(error.message, error.next);
+    throw error;
+  }
+}
+
+async function rawFor(surface: Surface, page?: Page) {
+  if (surface === "web" && page) return snapshot(page);
+  throw new MoleError("--raw is only for the web surface, where it adds the page snapshot.", `For the API's own answer: pnpm mole api get "${CATALOG_PATH}/items?api-version=2.0&pageIndex=0&pageSize=9"`);
+}
+
 const filterGroup = (page: Page, group: string) =>
   page.locator(".catalog-search-group", { has: page.getByRole("heading", { name: group, exact: true }) });
 
@@ -373,7 +444,8 @@ async function main() {
   try {
     parsed = parseArgs({ allowPositionals: true, options: {
       url: { type: "string", default: DEFAULT_URL }, start: { type: "boolean", default: false }, headless: { type: "boolean", default: false },
-      feature: { type: "string", multiple: true }, changed: { type: "boolean", default: false },
+      feature: { type: "string", multiple: true }, surface: { type: "string", multiple: true }, raw: { type: "boolean", default: false },
+      page: { type: "string" }, changed: { type: "boolean", default: false },
       brand: { type: "string" }, type: { type: "string" }, clear: { type: "boolean", default: false },
       "dry-run": { type: "boolean", default: false }, errors: { type: "boolean", default: false }, help: { type: "boolean", short: "h", default: false },
     } });
@@ -406,23 +478,37 @@ async function main() {
       }));
     }
     case "product": {
-      const target = args.join(" ");
-      if (!target) throw new MoleError("product needs a name or an id.", `pnpm mole product 1   or   pnpm mole product "Adventurer GPS Watch"`);
-      return out(await withPage(async (page, _browser, session) => {
-        if (/^\d+$/.test(target)) await page.goto(new URL(`/item/${target}`, session.appUrl).href, { waitUntil: "load" });
-        else {
-          const link = page.locator(".catalog-product", { has: page.locator(".name", { hasText: new RegExp(`^${escapeRegExp(target)}$`, "i") }) });
-          // Not on this page of the catalog: try the first page before giving up.
-          if (!(await link.count()) && new URL(page.url()).href !== new URL("/", session.appUrl).href) {
-            await page.goto(new URL("/", session.appUrl).href, { waitUntil: "load" });
-            await settle(page);
-          }
-          if (!(await link.count())) throw new MoleError(`No product called "${target}" on the first page of the catalog.`, "See the products here: pnpm mole snapshot. Or use its id: pnpm mole product <id>");
-          await link.first().click();
-        }
-        await page.locator(".item-details").waitFor().catch(() => {});
-        return snapshot(page);
-      }));
+      const target = (args[0] === "show" ? args.slice(1) : args).join(" ");
+      if (!target) throw new MoleError("product needs a name or an id.", `pnpm mole product show 1   or   pnpm mole product show "Adventurer GPS Watch" --surface api`);
+      return out(await driveOn(values, async (adapter, page) => ({
+        ...await adapter.product.show(/^\d+$/.test(target) ? Number(target) : target),
+        ...(values.raw ? { raw: await rawFor(adapter.surface, page) } : {}),
+      })));
+    }
+    case "catalog": {
+      const verb = args[0];
+      if (verb !== "list" && verb !== "facets") throw new MoleError("catalog needs list or facets.", "pnpm mole catalog list --page 2   or   pnpm mole catalog facets --brand Daybird --surface api");
+      const pageNumber = values.page === undefined ? 1 : Number(values.page);
+      if (!Number.isInteger(pageNumber) || pageNumber < 1) throw new MoleError(`--page must be a whole number from 1, not "${values.page}".`, "pnpm mole catalog list --page 2");
+      if (verb === "facets" && values.page !== undefined) throw new MoleError("facets has no pages.", "Drop --page, or use: pnpm mole catalog list --page 2");
+      const query = { brand: values.brand, type: values.type };
+      return out(await driveOn(values, async (adapter, page) => ({
+        ...(verb === "list" ? await adapter.catalog.list({ ...query, page: pageNumber }) : await adapter.catalog.facets(query)),
+        ...(values.raw ? { raw: await rawFor(adapter.surface, page) } : {}),
+      })));
+    }
+    case "api": {
+      if (args[0] !== "get" || !args[1]) throw new MoleError("api needs get <path>.", `pnpm mole api get "${CATALOG_PATH}/items/1?api-version=2.0"`);
+      const base = await apiUrlOf(await readSession());
+      const url = new URL(args[1], base);
+      const response = await fetch(url, { signal: AbortSignal.timeout(10_000) }).catch(error => {
+        throw new MoleError(`Can't reach ${url.origin}: ${error instanceof Error ? error.message : String(error)}.`, "Check the AppHost: pnpm mole doctor");
+      });
+      const text = await response.text();
+      let body: unknown = text;
+      try { body = JSON.parse(text); } catch { /* not JSON: show the text */ }
+      return out({ url: url.href, status: response.status, body: typeof body === "string" ? body.slice(0, 4000) : body,
+        note: "For looking around. A proof goes through a surface adapter, not through this." });
     }
     case "filter": {
       if (!values.brand && !values.type && !values.clear) throw new MoleError("filter needs --brand, --type or --clear.", "pnpm mole filter --brand Daybird");
@@ -474,7 +560,7 @@ async function main() {
       return out(await withPage(async page => ({ result: await page.evaluate(args.join(" ")) })));
     }
     case "features": return listFeatures(values.changed);
-    case "prove": return prove(values.feature ?? []);
+    case "prove": return prove(values.feature ?? [], values.surface ?? []);
     case "judge": return judgeProduct();
   }
 }

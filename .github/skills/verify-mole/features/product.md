@@ -5,60 +5,63 @@ touches:
   - src/WebApp/wwwroot/js/image-zoom.js
   - src/WebAppComponents/Item/
   - src/Catalog.API/
+surfaces:
+  - web
+  - api
 prove: pnpm mole prove --feature product
 ---
 
-# Product detail page (eShop)
+# Product details (eShop)
 
-Opening a product from the catalog shows its page at `/item/{id}`: name, brand, picture, description, price and a purchase action. An anonymous visitor cannot buy; the action sends them to log in. Server-rendered Blazor.
+Opening a product from the catalog shows its name, brand, description and price. A visitor who is not signed in cannot buy. The same product is read on two surfaces: its page on the storefront (`web`) and the catalog API behind it (`api`).
 
-Run every command below from the repo root with `pnpm mole`. The loop in the [verify-mole skill](../SKILL.md) applies.
+Run every command from the repo root with `pnpm mole`. The loop in the [verify-mole skill](../SKILL.md) applies.
 
-## Sub-features
+## Contract
 
-- **Header:** the product name as the `h1`, with the brand as the subtitle.
-- **Picture:** the image, and a zoom dialog (opens from the picture, closes with the button, the backdrop or Escape).
-- **Description and price:** `.item-desc` and `.item-buy .price` (for example `$199.99`).
-- **Action:** `.add-to-cart button`. Anonymous: **Log in to purchase**. Signed in: **Add to shopping bag**, and an "in your shopping bag" note once something is in the basket.
-- **Back to catalog:** returns to the filtered or paged catalog the visitor came from. A deep link falls back to `/`.
-- **Not found:** an unknown id returns 404 with "Sorry, we couldn't find any such product."
+These hold on every surface. `pnpm mole prove --feature product` checks each one per surface.
 
-## How to get to it (user POV)
+1. A product in the catalog opens by its name and shows that same name.
+2. The product is the one the catalog entry points to: same id.
+3. The product shows the same price as its catalog entry. Compare the exact numbers.
+4. The product has a description. It is about the named product and claims nothing a storefront could not support, such as guaranteed delivery dates or medical effects (the contract in `proof/judge.ts`).
+5. An id that does not exist is reported as not found with status 404.
 
-Open the storefront and click a product card, for example **Adventurer GPS Watch**. Its page opens. Click **Back to catalog**: the same filters and page are back.
-
-## Driving it with mole
+## Driving it
 
 ```bash
 pnpm mole doctor
-pnpm mole product "Adventurer GPS Watch"  # by card name (first page), or: pnpm mole product 99
-pnpm mole snapshot                        # product: name, price, description, action
-pnpm mole reload
-pnpm mole open /item/99999                # the not-found page
-pnpm mole console --errors
-pnpm mole prove --feature product         # this feature only; run pnpm mole prove (all) before you report
-pnpm mole judge                           # optional LLM check, needs TYPESAFE_API_KEY
+pnpm mole product show "Adventurer GPS Watch"            # by catalog name (first catalog page on web), default surface web
+pnpm mole product show 99 --surface api                  # by catalog id, on the other surface
+pnpm mole product show 99999                             # unknown id: found false, status 404
+pnpm mole prove --feature product                        # every surface; add --surface api or web to run one
+pnpm mole judge                                          # optional LLM check of the web copy, needs TYPESAFE_API_KEY
 ```
 
-Handles: `h1` with the product name, `.item-details`, `.item-desc`, `.item-buy .price`, `.add-to-cart button`, `a.item-back`.
+Both surfaces answer in the same shape (`found`, `id`, `name`, `brand`, `price`, `description`), so compare them. Default surface is `web`; the output says which ran. `--raw` adds the page snapshot on `web`.
 
-## What done means
+Only on one surface:
 
-1. The product link opens a page whose heading is the product's name (`prove`).
-2. The page shows the same name and the same price as its catalog card.
-3. The description is about the named product and makes no claim a storefront could not support, such as guaranteed delivery dates or medical effects. This is the contract in `proof/judge.ts`.
-4. An anonymous visitor sees **Log in to purchase**, not an add-to-bag button.
-5. The page survives a reload, and an unknown id shows the not-found text with a 404.
-6. **Back to catalog** returns to the same filtered or paged list.
+- `web`: `snapshot`, `reload`, `console --errors`, `screenshot`.
+- `api`: `pnpm mole api get <path>` to look at the raw answer. It is for exploring; no proof depends on it.
+
+## Web only
+
+- The page is headed with the product's name and the brand is its subtitle. The picture opens a zoom dialog (opens from the picture, closes with its button, the backdrop or Escape). Not proved.
+- A visitor who is not signed in sees **Log in to purchase**, not an add-to-bag button. Signed in, the action is **Add to shopping bag**.
+- The page survives a reload with the same name and price.
+- An unknown id tells the visitor, in words, that no such product exists.
+- **Back to catalog** returns to the filtered or paged list the visitor came from. A deep link falls back to the home page.
 
 ## Gotchas
 
-- The price is formatted separately on the card and on the page. Compare the exact strings from `snapshot`, not "a price is shown".
-- **Known failure** (seen on `127ac61`): `/item/99999` answers 404 with an empty body (`Content-Length: 0`), so the not-found text in `ItemPage.razor` never reaches the visitor and `product: an unknown id says so` fails. The check is right and the page is wrong; do not weaken the check. Fix the app, or record it as accepted before you call a full `prove` green.
-- `prove --feature product` covers the heading, the card's price on the page, a description, "Log in to purchase", a reload, the 404 and not-found text, and Back to catalog keeping a brand filter. It does not check the picture or zoom, the description's honesty (that is `judge`), or Back from a paged list: drive those yourself.
-- Back to catalog is read from the Referer. Reaching the page with `product <id>` or `open /item/N` is a deep link, so Back goes to `/`. To test it, click through from a filtered catalog (`filter --brand Daybird`, then `product "<name>"`).
-- `judge` compares the first card in the current sort order. It needs `TYPESAFE_API_KEY` and `@typesafe-ai/sdk`. Exit 2 means "can't tell" or "ASK A HUMAN": take `pnpm mole screenshot` and the contract to a human. It never means pass.
-- The picture and zoom dialog are not covered by any check. Look at the screenshot.
-- A PASS does not fail on `pageErrors`. Check `pnpm mole console --errors` is empty.
-- After editing `src/WebApp` or `src/WebAppComponents`, restart the app (`pnpm mole down`, then `up`) so the build is fresh.
-- Signed-in actions (add to bag, the in-cart note) need the `e2e/` credentials and are out of scope.
+- `[web]` **Known failure** (seen on `127ac61` and `5da3651`): an unknown id answers 404 with an empty body, so the not-found text never reaches the visitor and `product/web: an unknown id says so` fails. The check is right and the page is wrong; do not weaken it. Fix the app, or record it as accepted before you call a full `prove` green. The 404 itself passes on both surfaces.
+- `[web]` Back to catalog is read from where the visitor came from. `product show <id>` is a deep link, so Back goes home. To test it, click through from a filtered catalog (`filter --brand Daybird`, then open a card).
+- `[web]` `judge` compares the first card in the current sort order. It needs `TYPESAFE_API_KEY` and `@typesafe-ai/sdk`. Exit 2 means "can't tell" or "ASK A HUMAN": take `pnpm mole screenshot` and the contract to a human. It never means pass.
+- `[web]` A PASS does not fail on `pageErrors`. Check `pnpm mole console --errors` is empty.
+- `[api]` By name, the API matches names that start with what you typed, and mole picks the exact one. Names are not unique in the catalog, so use the id when it matters.
+- `[api]` A missing product answers 404 with a small problem document, not an empty body.
+- `[both]` The price is formatted separately for each surface. mole compares numbers (199.99), not strings.
+- `[both]` The proof does not check the picture or zoom, or the description's honesty (that is `judge`): drive those yourself.
+- `[both]` After editing `src/WebApp`, `src/WebAppComponents` or `src/Catalog.API`, restart the app (`pnpm mole down`, then `up`) so the build is fresh.
+- `[both]` Signed-in actions (add to bag, the in-cart note) need the `e2e/` credentials and are out of scope.

@@ -4,6 +4,6 @@
 import type { Prove } from "./proof";
 import { proveFeatures } from "./features";
 
-export { FEATURES, featureNames, featuresFor, proveFeatures, selectFeatures } from "./features";
+export { FEATURES, featureNames, featuresFor, proveFeatures, selectFeatures, surfacesFor } from "./features";
 
 export const prove: Prove = proveFeatures();

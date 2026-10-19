@@ -1,6 +1,6 @@
 # Proof kit and mole
 
-Drives the running eShop WebApp in a real Chromium like a visitor, records facts, and writes a receipt with a verdict and a screenshot. It complements the Playwright tests in `e2e/`: those assert and stop at the first failure, while a proof records every fact and tells you what to fix.
+Drives the running eShop WebApp in a real Chromium like a visitor, reads the catalog API behind it, records facts, and writes a receipt with a verdict and a screenshot. It complements the Playwright tests in `e2e/`: those assert and stop at the first failure, while a proof records every fact and tells you what to fix.
 
 ## Run it
 
@@ -18,7 +18,7 @@ Drives the running eShop WebApp in a real Chromium like a visitor, records facts
     pnpm prove --url http://localhost:5045      # another WebApp URL
     ```
 
-    `ESHOP_URL` sets the default URL.
+    `ESHOP_URL` sets the default URL. The API surface also needs the mobile-bff URL (see Surfaces); `pnpm prove` finds it with `aspire describe`, or set `ESHOP_API_URL`. `--surface web` proves the storefront alone.
 
 ## mole: drive the storefront like a user
 
@@ -28,17 +28,19 @@ Drives the running eShop WebApp in a real Chromium like a visitor, records facts
 pnpm mole up --start     # own terminal: runs the AppHost, waits for the storefront, opens Chrome
 pnpm mole up             # or attach to an AppHost you already run on :5045 (--url for another)
 pnpm mole doctor         # is this instance worth driving?
-pnpm mole open /item/3   # also: page 2, product "Adventurer GPS Watch", filter --brand Daybird, reload, reset
+pnpm mole catalog list --page 2 --surface api   # shared feature commands: catalog list|facets, product show; --surface web|api
+pnpm mole open /item/3   # web only: also page 2, filter --brand Daybird, reload, reset
 pnpm mole snapshot       # what a user sees; also: storage, console --errors, network, screenshot, eval
-pnpm mole prove          # exit 0 PASS, 1 FAIL, 2 can't tell
+pnpm mole prove          # every feature on every surface; --feature, --surface narrow it. Exit 0 PASS, 1 FAIL, 2 can't tell
 pnpm mole down           # stop what up started
 ```
 
 `pnpm mole help` lists every command; the agent loop is in [.github/skills/verify-mole/SKILL.md](../.github/skills/verify-mole/SKILL.md).
 
 - `--start` runs `dotnet run --project src/eShop.AppHost/eShop.AppHost.csproj` with `ESHOP_USE_HTTP_ENDPOINTS=1`, so the WebApp is on `http://localhost:5045`. It needs a container runtime and the .NET SDK from `global.json`; mole finds it on `PATH`, in `DOTNET_ROOT`, or in `~/.dotnet`, so a user-level install needs no setup. The AppHost output goes to `proof/.runs/mole/apphost.log`. `down` stops the services; the AppHost keeps its persistent containers (RabbitMQ, Postgres) by design.
+- **Surfaces.** A feature is a behavior contract that runs on a `--surface`: `web` (the storefront, in Chrome) or `api` (Catalog.API, over HTTP). Drive commands default to `web` and print which surface ran; `prove` with no `--surface` runs every one, and the receipt's `surfaces` lists what ran (a surface that did not run is not proved). `snapshot`, `console`, `network`, `screenshot`, `reset`, `filter` and `page` are web-only. `api get <path>` is for exploring and no proof uses it. Catalog.API is not exposed directly: it is reached through the `mobile-bff` proxy, whose port Aspire picks. `up` finds it with `aspire describe` (override with `ESHOP_API_URL`), records it in the session, and `doctor` checks it. The API counts pages from 0 and defaults to 10 per page; the API adapter hides that (pages from 1, 9 per page, names for ids).
 - Driving is anonymous: the catalog, pagination, brand/type filters (eShop has no text search) and product pages.
-- **Revision.** eShop serves none, so mole derives one: `git HEAD` plus a hash of uncommitted changes under `src/WebApp` and `src/WebAppComponents` (for example `2bd2b7b+b6530753`). It is recorded when `up` starts the app. When the source moves past it, `doctor` reports the build STALE and `prove` refuses to run (exit 2): restart the app and `up` again. A receipt for an older revision is reported STALE too. `pnpm prove` records the current source revision but cannot know which build is running, so it only detects edits made during the proof.
+- **Revision.** eShop serves none, so mole derives one: `git HEAD` plus a hash of uncommitted changes under `src/WebApp`, `src/WebAppComponents` and `src/Catalog.API` (for example `2bd2b7b+b6530753`). It is recorded when `up` starts the app. When the source moves past it, `doctor` reports the build STALE and `prove` refuses to run (exit 2): restart the app and `up` again. A receipt for an older revision is reported STALE too. `pnpm prove` records the current source revision but cannot know which build is running, so it only detects edits made during the proof.
 - **judge** (optional) asks an LLM whether a product page agrees with its catalog card and makes no unsupported claims. It needs `TYPESAFE_API_KEY` (also read from `.env`) and `pnpm add -D @typesafe-ai/sdk`; without them it exits 2 with a human fallback. Nothing else depends on it.
 - State (session, event log, receipts, screenshots) lives in `proof/.runs/mole/`, overridable with `MOLE_DIR`.
 
@@ -56,21 +58,22 @@ The receipt prints as JSON and is saved with a screenshot in `proof/.runs/` (git
 
 ## What it checks
 
-[prove.ts](prove.ts) runs every feature in [features/](features/) as a fresh anonymous visitor, in one browser context and one receipt. Check names start with the feature (`catalog:`, `product:`). Each feature has a map in [.github/skills/verify-mole/features/](../.github/skills/verify-mole/features/README.md).
+[prove.ts](prove.ts) runs every feature in [features/](features/) as a fresh anonymous visitor, in one browser context and one receipt. Check names start with the feature and the surface (`catalog/web:`, `product/api:`). Each feature has a map in [.github/skills/verify-mole/features/](../.github/skills/verify-mole/features/README.md).
 
-- **catalog:** the hero heading, the product list and its count (101), page 2 (9 products) and a reload, the Daybird filter (10 products, page dropped), the empty state, and Clear all filters.
-- **product:** the card opens a page headed with its name, the page shows the card's price and a description, an anonymous visitor sees "Log in to purchase", a reload, an unknown id (404 and not-found text), and Back to catalog keeping a filter.
+- **catalog**, on web and api: the product list, 9 per page, the count (101), page 2 sharing nothing with page 1, the Daybird filter (10), a filter with no matches, and option counts. Web only: the hero heading, the page in the address and a reload, a filter dropping the page, the empty state, and Clear all filters.
+- **product**, on web and api: the catalog entry opens its product with the same id and price, a description, and an unknown id is 404. Web only: the page's heading, "Log in to purchase", a reload, the not-found text, and Back to catalog keeping a filter.
 
-Run one feature with `pnpm mole prove --feature catalog` (or `pnpm prove --feature catalog`). A receipt lists the features it proved, and `doctor` says so when that is a subset. `pnpm mole features --changed` lists the features your uncommitted changes touch. `pnpm test:proof` checks that the maps, the registry in `features/index.ts` and the feature map index agree.
+Run one feature with `pnpm mole prove --feature catalog` and one surface with `--surface api` (also on `pnpm prove`). A receipt lists the features and surfaces it proved, `next` warns when one was skipped, and `doctor` says so when the last receipt is a subset. `pnpm mole features --changed` lists the features your uncommitted changes touch. `pnpm test:proof` checks that the maps, the registry in `features/index.ts` and the feature map index agree.
 
 ## Add a check
 
-Edit the feature's file in `features/`. It receives `{ page, email, check, storage }`:
+Edit the feature's file in `features/`. It receives `{ page, email, surfaces, apiUrl, check, storage }`:
 
 ```ts
 check("name", actual, expected, "hint that tells an agent what to fix");
 ```
 
+- Write a contract rule once, through the surface adapters in `features/surfaces/` (`adapterFor(surface, kit)`), and loop over `kit.surfaces`; name the check `feature/<surface>: ...`. Selectors, routes and wire details stay in the adapter. Put what only one surface has in a clearly named block for it. Wrap adapter calls in `observe()` so an unreachable surface is a failed check, not a crash.
 - `check` never throws. A failed check is evidence, not a crash. Wait for the page with `expect(...)` or locators, never a timer.
 - `page` is a fresh browser context (no cookies or storage) on the app's home page. Navigate with `new URL("/", page.url()).href`, because there is no `baseURL`. Features run one after another on the same page, so start each one with a navigation to a known place and prefix check names with the feature.
 - `storage()` returns the app's localStorage. The eShop cart is server-side, so it is unused here.
@@ -82,11 +85,12 @@ check("name", actual, expected, "hint that tells an agent what to fix");
 |---|---|
 | `proof.ts` | The kit: `runProof()` launches a fresh context, runs `prove()`, collects checks and page errors, and builds the receipt. Copied from the beyond-done lab. |
 | `mole.ts` | The `pnpm mole` CLI. |
-| `app.ts` | Starts the AppHost for `up --start`, and derives the source revision. |
+| `app.ts` | Starts the AppHost for `up --start`, finds the API proxy URL, and derives the source revision. |
 | `judge.ts` | The optional LLM judge. |
 | `prove.ts` | Runs every feature's proof, or the ones `--feature` names. |
-| `features/` | One proof per feature (`catalog.ts`, `product.ts`), the registry (`index.ts`) and shared helpers. |
-| `features.test.ts` | `pnpm test:proof`: keeps the maps, the registry and the index in step. |
+| `features/` | One proof per feature (`catalog.ts`, `product.ts`) and the registry (`index.ts`). |
+| `features/surfaces/` | The surface adapters: `types.ts` (the shared shapes), `web.ts` (selectors and routes), `api.ts` (paging, ids, versions), `index.ts`. |
+| `features.test.ts` | `pnpm test:proof`: keeps the maps, the registry and the index in step, and checks the adapters against fixture payloads. |
 | `run.ts` | The command behind `pnpm prove`. |
 
 
