@@ -26,6 +26,8 @@ export default defineConfig({
     /* Collect trace when retrying the failed test. See https://playwright.dev/docs/trace-viewer */
     trace: 'on-first-retry',
     ...devices['Desktop Chrome'],
+    /* Aspire serves redirects (e.g. to Identity) over a self-signed dev certificate. */
+    ignoreHTTPSErrors: true,
   },
 
   /* Configure projects for major browsers */
@@ -87,6 +89,7 @@ export default defineConfig({
     command: 'dotnet run --project src/eShop.AppHost/eShop.AppHost.csproj',
     url: 'http://localhost:5045',
     reuseExistingServer: !process.env.CI,
+    ignoreHTTPSErrors: true,
     stderr: 'pipe',
     stdout: 'pipe',
     timeout: process.env.CI ? (5 * 60_000) : 60_000,
