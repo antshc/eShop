@@ -490,6 +490,7 @@ $RECYCLE.BIN/
 /blob-report/
 /.playwright-cli/
 /playwright/.cache/
+/proof/.runs/
 /playwright/.auth/
 /user.json
 .azure
