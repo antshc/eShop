@@ -10,7 +10,8 @@
     "test:e2e:headed": "playwright test --headed",
     "test:e2e:report": "playwright show-report",
     "prove": "tsx proof/run.ts",
-    "mole": "tsx proof/mole.ts"
+    "mole": "tsx proof/mole.ts",
+    "test:proof": "tsx --test proof/features.test.ts"
   },
   "keywords": [],
   "author": "",

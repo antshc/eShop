@@ -20,6 +20,8 @@ export type Receipt = {
   app: string;
   at: string;
   checks: Check[];
+  /** The features this run proved. A subset is not a full proof. */
+  features?: string[];
   pageErrors: string[];
   screenshot?: string;
   error?: string;

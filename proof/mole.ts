@@ -1,6 +1,7 @@
 // mole: a remote control for the eShop storefront, built for agents.
 // One small CLI that launches, drives, inspects, and proves the app over the
 // Chrome DevTools Protocol. JSON out; every error says what to do next.
+import { execFileSync } from "node:child_process";
 import { appendFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { existsSync, readFileSync } from "node:fs";
 import { createServer } from "node:net";
@@ -11,7 +12,7 @@ import { chromium, expect, type Browser, type Page } from "@playwright/test";
 import { DEFAULT_URL, ROOT, dotnetEnv, reachable, sourceRevision, startApp, type StartedApp } from "./app";
 import { JudgeUnavailable, judge } from "./judge";
 import { readStorage, runProof, type Receipt } from "./proof";
-import { prove as proveStorefront } from "./prove";
+import { featureNames, featuresFor, proveFeatures, selectFeatures } from "./prove";
 
 // MOLE_DIR isolates a second instance (tests, a parallel checkout) from the default one.
 const DIR = process.env.MOLE_DIR ?? join(__dirname, ".runs", "mole");
@@ -38,7 +39,8 @@ const COMMANDS = {
   network: ["Look", "network", "Responses and failed requests since up."],
   screenshot: ["Look", "screenshot [path]", "Save a full-page screenshot."],
   eval: ["Look", "eval <expression>", "Read page state after the user path ran. Not for calling app internals."],
-  prove: ["Prove", "prove", "Fresh visitor, proof/prove.ts, a receipt. Exit 0 PASS, 1 FAIL, 2 can't tell."],
+  features: ["Prove", "features [--changed]", "List the features and their maps. --changed: only those your uncommitted changes touch."],
+  prove: ["Prove", "prove [--feature NAME]", "Fresh visitor, proof/features/, a receipt. Exit 0 PASS, 1 FAIL, 2 can't tell. No --feature runs them all."],
   judge: ["Prove", "judge", "Optional: ask an LLM whether a product page is consistent and honest. Needs TYPESAFE_API_KEY."],
 } as const;
 type Command = keyof typeof COMMANDS;
@@ -253,22 +255,28 @@ async function doctor() {
     const receipt: Receipt | null = existsSync(RECEIPT) ? JSON.parse(await readFile(RECEIPT, "utf8")) : null;
     proof = !receipt ? { status: "none yet", next: "pnpm mole prove" }
       : receipt.revision !== source ? { status: `STALE: the last receipt says ${receipt.verdict} for ${receipt.revision}, but the source is now ${source}. That proof is for code that no longer exists.`, next: "pnpm mole prove" }
-      : { status: `${receipt.verdict} for the current source (${source}) at ${receipt.at}`, ...(receipt.verdict !== "PASS" ? { next: receipt.next[0] } : {}) };
+      : { status: `${receipt.verdict} for the current source (${source}) at ${receipt.at}${receipt.features && receipt.features.length < featureNames().length ? `, only ${receipt.features.join(", ")}: run pnpm mole prove for all` : ""}`, ...(receipt.verdict !== "PASS" ? { next: receipt.next[0] } : {}) };
   }
   const ok = checks.every(check => check.ok);
   out({ ok, checks, proof });
   if (!ok) process.exitCode = 1;
 }
 
-async function prove() {
+async function prove(features: string[]) {
+  let selected: string[];
+  try { selected = selectFeatures(features); } catch (error) {
+    throw new MoleError((error as Error).message, "See them: pnpm mole features");
+  }
   const receipt = await withPage(async (_page, browser, session) => {
     const source = await sourceRevision();
     if (source !== session.builtRevision) throw new MoleError(
       `The running build was started on ${session.builtRevision} but the source is now ${source}. A proof would describe code that is not running.`,
       session.startedApp ? "Restart it: pnpm mole down; pnpm mole up --start" : "Restart the AppHost, then: pnpm mole down; pnpm mole up");
     // One screenshot per run, so each saved receipt keeps the image it was proved with.
-    return runProof(browser, session.appUrl, proveStorefront, join(DIR, `proof-${source}-${Date.now()}.png`), sourceRevision);
+    return runProof(browser, session.appUrl, proveFeatures(selected), join(DIR, `proof-${source}-${Date.now()}.png`), sourceRevision);
   });
+  receipt.features = selected;
+  if (selected.length < featureNames().length) receipt.next.push(`Only ${selected.join(", ")} was proved. Run pnpm mole prove with no --feature before you report.`);
   const json = JSON.stringify(receipt, null, 2);
   await writeFile(RECEIPT, json); // latest, for doctor
   // Append, never overwrite: failures stay in the history next to the final green.
@@ -276,6 +284,19 @@ async function prove() {
   await writeFile(join(DIR, "receipts", `${receipt.at.replace(/[:.]/g, "-")}-${receipt.revision ?? "unknown"}.json`), json);
   out(receipt);
   process.exitCode = receipt.verdict === "PASS" ? 0 : receipt.verdict === "FAIL" ? 1 : 2;
+}
+
+// Which features need proving: all of them, or those whose files your uncommitted changes touch.
+function listFeatures(changed: boolean) {
+  const git = (...args: string[]) => execFileSync("git", args, { cwd: ROOT, encoding: "utf8" }).split("\n").filter(Boolean);
+  const files = changed ? [...git("diff", "--name-only", "HEAD"), ...git("ls-files", "--others", "--exclude-standard")] : [];
+  const names = changed ? featuresFor(files) : featureNames();
+  out({
+    ...(changed ? { changedFiles: files.length } : {}),
+    features: names.map(name => ({ name, map: `.github/skills/verify-mole/features/${name}.md`, prove: `pnpm mole prove --feature ${name}` })),
+    next: !changed ? "Open the map of the feature you are touching, then: pnpm mole prove --feature <name>"
+      : names.length ? `Prove each, then run pnpm mole prove with no --feature once before you report.` : "No feature's files changed. Run pnpm mole prove if you still need proof.",
+  });
 }
 
 async function judgeProduct() {
@@ -352,6 +373,7 @@ async function main() {
   try {
     parsed = parseArgs({ allowPositionals: true, options: {
       url: { type: "string", default: DEFAULT_URL }, start: { type: "boolean", default: false }, headless: { type: "boolean", default: false },
+      feature: { type: "string", multiple: true }, changed: { type: "boolean", default: false },
       brand: { type: "string" }, type: { type: "string" }, clear: { type: "boolean", default: false },
       "dry-run": { type: "boolean", default: false }, errors: { type: "boolean", default: false }, help: { type: "boolean", short: "h", default: false },
     } });
@@ -451,7 +473,8 @@ async function main() {
       if (!args[0]) throw new MoleError("eval needs an expression.", `pnpm mole eval "document.querySelectorAll('.catalog-product').length"`);
       return out(await withPage(async page => ({ result: await page.evaluate(args.join(" ")) })));
     }
-    case "prove": return prove();
+    case "features": return listFeatures(values.changed);
+    case "prove": return prove(values.feature ?? []);
     case "judge": return judgeProduct();
   }
 }

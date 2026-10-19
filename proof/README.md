@@ -56,22 +56,23 @@ The receipt prints as JSON and is saved with a screenshot in `proof/.runs/` (git
 
 ## What it checks
 
-[prove.ts](prove.ts) runs as a fresh anonymous visitor:
+[prove.ts](prove.ts) runs every feature in [features/](features/) as a fresh anonymous visitor, in one browser context and one receipt. Check names start with the feature (`catalog:`, `product:`). Each feature has a map in [.github/skills/verify-mole/features/](../.github/skills/verify-mole/features/README.md).
 
-- the home page shows the hero heading and lists catalog products;
-- a product link opens its detail page;
-- page 2 of the catalog shows 9 products, and still does after a reload.
+- **catalog:** the hero heading, the product list and its count (101), page 2 (9 products) and a reload, the Daybird filter (10 products, page dropped), the empty state, and Clear all filters.
+- **product:** the card opens a page headed with its name, the page shows the card's price and a description, an anonymous visitor sees "Log in to purchase", a reload, an unknown id (404 and not-found text), and Back to catalog keeping a filter.
+
+Run one feature with `pnpm mole prove --feature catalog` (or `pnpm prove --feature catalog`). A receipt lists the features it proved, and `doctor` says so when that is a subset. `pnpm mole features --changed` lists the features your uncommitted changes touch. `pnpm test:proof` checks that the maps, the registry in `features/index.ts` and the feature map index agree.
 
 ## Add a check
 
-Edit `prove.ts`. It receives `{ page, email, check, storage }`:
+Edit the feature's file in `features/`. It receives `{ page, email, check, storage }`:
 
 ```ts
 check("name", actual, expected, "hint that tells an agent what to fix");
 ```
 
 - `check` never throws. A failed check is evidence, not a crash. Wait for the page with `expect(...)` or locators, never a timer.
-- `page` is a fresh browser context (no cookies or storage) on the app's home page. Navigate with `new URL("/", page.url()).href`, because there is no `baseURL`.
+- `page` is a fresh browser context (no cookies or storage) on the app's home page. Navigate with `new URL("/", page.url()).href`, because there is no `baseURL`. Features run one after another on the same page, so start each one with a navigation to a known place and prefix check names with the feature.
 - `storage()` returns the app's localStorage. The eShop cart is server-side, so it is unused here.
 - A signed-in proof (for example, the cart survives a reload) needs the credentials used by `e2e/login.setup.ts` (`USERNAME1` and `PASSWORD`).
 
@@ -83,5 +84,40 @@ check("name", actual, expected, "hint that tells an agent what to fix");
 | `mole.ts` | The `pnpm mole` CLI. |
 | `app.ts` | Starts the AppHost for `up --start`, and derives the source revision. |
 | `judge.ts` | The optional LLM judge. |
-| `prove.ts` | The eShop-specific checks. |
+| `prove.ts` | Runs every feature's proof, or the ones `--feature` names. |
+| `features/` | One proof per feature (`catalog.ts`, `product.ts`), the registry (`index.ts`) and shared helpers. |
+| `features.test.ts` | `pnpm test:proof`: keeps the maps, the registry and the index in step. |
 | `run.ts` | The command behind `pnpm prove`. |
+
+
+# About the mole
+## Product Purpose
+
+Teach agents to verify their own work in 60 minutes, led jointly by Nick Nisi and Zack Proser. Attendees use an app-specific verification CLI (`pnpm snack`), write the proof that defines “done,” hand both to their own agent, and leave with a plan for the same lever in their own app.
+
+## Brand Personality
+
+Practical, playful, precise. Use WorkOS logo and branding, explicitly requested by Nick Nisi. The workshop site is reference material, not a marketing campaign.
+
+## Anti-references
+
+Do not retain Typed Void as the workshop identity. No fake model measurements or dashboards that obscure the one editable proof. The projected deck should be playful and visually expressive, with meaningful motion—not documentation pasted onto slides. See DESIGN.md.
+
+## Design Principles
+
+- One shared task throughout: a browser-local waitlist for a sold-out workshop.
+- Distinguish observed facts (`prove`), semantic judgment (`judge`), and the stop rule.
+- Evidence belongs to one revision; “can't tell” is never a pass.
+- Show a useful next action, including checkpoints for attendees who fall behind.
+- Make recorded runs and live calls unmistakable.
+
+## Accessibility & Inclusion
+
+Use semantic links, labelled form controls, visible keyboard focus, readable contrast, responsive text, and no motion-dependent content. Keep preflight outside the teaching hour, support pair work and a no-key path. No specific certification is claimed.
+
+## User-facing checks
+
+- Attendee can find the preflight, sequential lessons, glossary, slides and take-home worksheet.
+- A new visitor can submit a test email in the local lab; the reference app preserves the email, status, and confirmation across reload.
+- The shipped attendee app visibly loses the record on reload.
+- Every `snack` error tells the reader what to run next.
