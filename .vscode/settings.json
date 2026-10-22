@@ -1,3 +1,4 @@
 {
-    "dotnet.defaultSolution": "eShop.Web.slnf"
+    "dotnet.defaultSolution": "eShop.Web.slnf",
+    "python.terminal.useEnvFile": true
 }

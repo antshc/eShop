@@ -5,10 +5,10 @@
 ## Run it
 
 ```bash
-uv run .claude/skills/sssf/scripts/install.py
+uv run .github/skills/sssf/scripts/install.py
 ```
 
-Run from the **target repo root** — the cwd is where everything lands. If the skill lives in your user scope, the path is `~/.claude/skills/sssf/scripts/install.py`.
+Run from the **target repo root** — the cwd is where everything lands. If the skill lives in your user scope, the path is `~/.copilot/skills/sssf/scripts/install.py`.
 
 ## What gets stamped
 
