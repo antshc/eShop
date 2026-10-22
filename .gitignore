@@ -494,3 +494,7 @@ $RECYCLE.BIN/
 /playwright/.auth/
 /user.json
 .azure
+
+# sssf runtime
+adws/adw_data/sessions/
+adws/adw_data/sssf.db*
