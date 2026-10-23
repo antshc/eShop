@@ -1,0 +1,2 @@
+loop[otel] @ git+https://github.com/antshc/loop
+pytest>=8
