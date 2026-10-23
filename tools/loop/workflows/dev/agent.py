@@ -9,9 +9,9 @@ from collections.abc import Mapping, Sequence
 from dataclasses import asdict
 from pathlib import Path
 
-from loop import AgentProfile, AgentRequest, AgentWorkspace, copilot
+from loop import AgentRequest, AgentWorkspace
 
-from .phases import Owner
+from .agents import CHORE, DEVELOPER, PLANNER, REVIEWER, VERIFIER
 from .records import (
     AgentCommitSubject, ChoreContext, ChoreResult, PlanContext, PlanResult, ReviewContext, ReviewResult, Ticket,
     TicketContext, TicketResult as DevResult, TicketWorkflowError as DevError, VerifyContext, VerifyResult,
@@ -21,14 +21,6 @@ from .reply import ChoreResponse, DevResponse, PlanResponse, ReviewResponse, Ver
 
 
 logger = logging.getLogger("workflow.dev")
-
-# `name` is the agent's Aspire resource: each actor shows as its own lane in the trace.
-PLANNER = AgentProfile(copilot, model="gpt-6.1-sol", reasoning_effort="high", name=Owner.PLANNER)
-DEVELOPER = AgentProfile(copilot, model="claude-sonnet-5.5", reasoning_effort="medium", name=Owner.DEVELOPER)
-VERIFIER = AgentProfile(copilot, model="claude-sonnet-5.5", reasoning_effort="medium", name=Owner.VERIFIER)
-CHORE = AgentProfile(copilot, model="gpt-6.1-sol", reasoning_effort="medium", name=Owner.CHORE)
-REVIEWER = AgentProfile(copilot, model="gpt-6.1-sol", reasoning_effort="high", name=Owner.REVIEWER)
-
 
 PROMPTS = Path(__file__).parent / "prompts"
 PROMPT = PROMPTS / "implement.md"

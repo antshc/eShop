@@ -5,6 +5,7 @@ import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -555,7 +556,7 @@ def _telemetry_run(
             return self
 
     monkeypatch.setattr(run_module, "Agent", Builder)
-    monkeypatch.setattr(run_module, "otlp_observer", lambda **kwargs: built.append(kwargs) or object())
+    monkeypatch.setattr(run_module, "otlp_observer", lambda **kwargs: built.append(kwargs) or MagicMock())
     monkeypatch.setattr(run_module, "process_specs", lambda repositories, d: deps.append(d) or 0)
     harness = DevHarness(tmp_path, specs=[], tickets={})
     dev.main(

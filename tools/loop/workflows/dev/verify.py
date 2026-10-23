@@ -54,6 +54,8 @@ def verify_app(
         raise TicketWorkflowError(f"cannot resolve branches for Spec {spec.url}")
     skills = find_verification_skills(worktree.path)
     if not skills:
+        with phases.phase("verify", Kind.AGENT, Owner.VERIFIER, spec=spec.number) as phase:
+            phase.skip("No app-verification skill found")
         return SKIPPED
     evidence_dir = evidence_root / slugify(spec.initiative) / datetime.now().strftime("%Y%m%dT%H%M%S")
     evidence_dir.mkdir(parents=True, exist_ok=True)
@@ -76,13 +78,17 @@ def verify_app(
             result = run_verify(context, worktree)
         except (CommandError, subprocess.CalledProcessError, TicketWorkflowError) as exception:
             note = f"verifier failed: {exception}"
-            phase.fail(note)
+            phase.fail("Verification did not complete")
         phase.set(verdict=result.verdict)
         moved = made_no_commit(git, worktree.path, head_before.sha)
+        if moved:
+            phase.fail("Verifier committed changes")
         if not phase.gate("the agent did not commit", moved is None, moved or ""):
             note = moved or ""
         if not note and result.verdict != "inconclusive":
             evidence = any(evidence_dir.iterdir())
+            if not evidence:
+                phase.fail("Verification evidence missing")
             if not phase.gate("evidence was saved", evidence, f"no evidence in {evidence_dir}"):
                 note = f"no evidence in {evidence_dir}"
     verdict = "inconclusive" if note else result.verdict

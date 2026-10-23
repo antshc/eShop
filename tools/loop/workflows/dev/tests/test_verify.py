@@ -31,7 +31,7 @@ def _verdict(verdict: str = "pass", *, findings: list[dict] | None = None, messa
 
 
 def _save_evidence(harness: DevHarness, prompt: str) -> None:
-    directory = Path(re.search(r"`([^`]*evidence[^`]*)`", prompt)[1])
+    directory = Path(re.search(r"Evidence directory: `([^`]+)`", prompt)[1])
     directory.mkdir(parents=True, exist_ok=True)
     (directory / "cart.png").write_text("png")
 
