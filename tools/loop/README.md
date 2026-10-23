@@ -38,11 +38,27 @@ first. A Spec needs `repo:target:antshc/eShop` and `repo:base:<branch>` labels; 
 
 Every Agent Run and Worktree is exported as OpenTelemetry spans and metrics over OTLP/HTTP, as
 service `loop-dev` with one resource per agent. The default endpoint is the standalone Aspire
-dashboard:
+dashboard. Either run it in Docker (UI on http://localhost:18888):
 
 ```sh
-aspire dashboard run --otlp-http-url http://localhost:4318 --allow-anonymous
+mkdir -p .loop/dashboard
+docker compose -f tools/loop/compose.yaml up -d
 ```
+
+[compose.yaml](compose.yaml) binds the ports to localhost, allows anonymous access (local development
+only), and persists each start under `.loop/dashboard/` as the host user (override with `LOOP_UID`/`LOOP_GID`
+if your ids are not 1000; `LOOP_DASHBOARD_PORT`, `LOOP_OTLP_GRPC_PORT` and `LOOP_OTLP_HTTP_PORT` change the
+host ports). Or run it with the Aspire CLI:
+
+```sh
+ASPIRE_DASHBOARD_DATA_DIRECTORY="$PWD/.loop/dashboard" \
+  aspire dashboard run --otlp-http-url http://localhost:4318 --allow-anonymous --application-name eShop-loop --persistence Run
+```
+
+`--persistence Run` saves each dashboard start as its own SQLite database under
+`.loop/dashboard/runs/` (gitignored; last 10 unpinned runs kept), so telemetry survives restarts and past
+runs can be picked in the dashboard. Without `ASPIRE_DASHBOARD_DATA_DIRECTORY` the data goes to
+`~/.aspire/dashboard/`. Use `Resume` for one continuous history, `None` (the default) for a temporary database.
 
 If the dashboard requires an API key (no `--allow-anonymous`), set `OTEL_EXPORTER_OTLP_HEADERS="x-otlp-api-key=<key>"`.
 Without a collector the export fails quietly in the background; pass `--no-otel` to skip it.
