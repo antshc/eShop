@@ -10,7 +10,6 @@ from pathlib import Path
 import pytest
 
 from workflows.dev import ESHOP, HARNESS, PROMPT, agent, load_prompt
-from workflows.dev.agents import INSTRUCTIONS
 from workflows.dev.records import ChoreContext, PlanContext, ReviewContext, Spec, VerifyContext
 from workflows.dev.tests.doubles import DevHarness
 
@@ -98,7 +97,7 @@ def test_every_role_prompt_exists_and_its_placeholders_match_the_arguments_exact
 
 @pytest.mark.parametrize("name", ["implement", "chore", "verify"])
 def test_prompts_of_agents_that_edit_forbid_committing(name: str) -> None:
-    prompt = " ".join((root_instructions(name) + load_prompt(name)).split())
+    prompt = " ".join(load_prompt(name).split())
 
     assert "git commit" in prompt and "Loop commits" in prompt
 
@@ -117,7 +116,3 @@ def test_each_actor_has_its_own_named_profile_for_its_aspire_resource() -> None:
     }
 
     assert profiles == {"planner", "developer", "verifier", "chore", "reviewer"}
-
-
-def root_instructions(name: str) -> str:
-    return (INSTRUCTIONS / f"{name}.md").read_text()

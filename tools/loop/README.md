@@ -60,12 +60,10 @@ permissions, additional directories, environment, or timeout. For example:
 ```python
 from dataclasses import replace
 from pathlib import Path
-from loop import Instructions
 from .agents import DEVELOPER
 
 MY_DEVELOPER = replace(
     DEVELOPER,
-    instructions=Instructions.from_file(Path(__file__).resolve().parent / "my-developer.md"),
     add_dirs=(Path("/absolute/shared-context"),),
     env={"APP_ENV": "development"},
     timeout_sec=1800,
@@ -73,11 +71,11 @@ MY_DEVELOPER = replace(
 ```
 
 Import the chosen profile into `agent.py` and pass it to `workspace.agent(profile)`.
-`instructions` also accepts inline text or `Instructions.from_url()` for a public raw-text URL.
-Files resolve from the Python module location, independently of the shell's current directory.
-Loop loads instructions when binding the agent and composes them with each `AgentRequest`.
-Task templates supply the current Ticket/Spec, branch, paths, commits, skills and evidence directory;
-instruction files contain reusable behavior and response contracts, with no template placeholders.
+Each Markdown file in [agents/](workflows/dev/agents/) contains the complete agent prompt:
+behavior, task placeholders, restrictions and response contract. The workflow loads that file,
+renders its placeholders with the current execution context, and passes the result once in
+`AgentRequest`. Paths resolve from the workflow module, independently of the shell's directory.
+The default profiles leave `instructions` unset to avoid prepending a second copy.
 
 Profiles explicitly retain Copilot's existing tool permission defaults. The workflow's Git/status
 gates still enforce checkout/worktree rules. Managed workspaces and `START_MODE` in `run.py`
@@ -136,8 +134,7 @@ PYTHONPATH=tools/loop python -m workflows dev --spec <SPEC_ISSUE_NUMBER>
 ```
 
 Agents run on the host with your permissions and the dev workflow creates commits, pushes
-branches and opens draft PRs. Read reusable [agent instructions](workflows/dev/instructions/)
-and [task templates](workflows/dev/agents/) first. A Spec needs `repo:target:antshc/eShop` and `repo:base:<branch>` labels; Specs labelled
+branches and opens draft PRs. Read the complete [agent prompts](workflows/dev/agents/) first. A Spec needs `repo:target:antshc/eShop` and `repo:base:<branch>` labels; Specs labelled
 `hitl` are skipped.
 
 | Option | Default | Effect |

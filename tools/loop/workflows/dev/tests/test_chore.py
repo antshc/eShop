@@ -64,7 +64,7 @@ def test_chore_prompt_lists_the_branch_commits_with_their_bodies() -> None:
 
 
 def test_the_chore_prompt_forbids_committing() -> None:
-    prompt = agent.CHORE.instructions.path.read_text()
+    prompt = agent.load_prompt("chore")
 
     assert "Never run `git add`, `git commit`" in prompt and "COMMIT_SUBJECT_PREFIX" not in prompt
 
