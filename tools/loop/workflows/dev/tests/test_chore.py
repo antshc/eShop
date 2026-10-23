@@ -2,15 +2,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
-from loop import AgentProfile, copilot
+from loop import copilot
 
 from workflows.dev import agent
 from workflows.dev.chore import DIFF_DIR, MANIFEST_NAME, capture_pull_request_diff
 from workflows.dev.platforms import GitHubRepo
 from workflows.dev.records import ChoreContext
-from workflows.dev.tests.doubles import PR_DIFF, DevHarness, FakeGhCli, crash
+from workflows.dev.tests.doubles import PR_DIFF, DevHarness, FakeGhCli, crash, envelope
 
 _CHORE_SUBJECT = "chore(Checkout): tidy"
 
@@ -50,7 +48,7 @@ def test_an_empty_pull_request_diff_yields_an_empty_manifest(tmp_path: Path) -> 
 
 
 def test_chore_prompt_placeholders_match_the_supplied_arguments_exactly() -> None:
-    context = ChoreContext("url", "chore(X): ", "main", "feature", Path("/w/bin/review_diff"))
+    context = ChoreContext("url", "main", "feature", Path("/w/bin/review_diff"))
 
     args = agent.chore_args(context, Path("/w"))
 
@@ -58,15 +56,25 @@ def test_chore_prompt_placeholders_match_the_supplied_arguments_exactly() -> Non
 
 
 def test_chore_prompt_lists_the_branch_commits_with_their_bodies() -> None:
-    context = ChoreContext("url", "chore(X): ", "main", "feature", Path("/w/d"), ("a1b2c3d first\n    why",))
+    context = ChoreContext("url", "main", "feature", Path("/w/d"), ("a1b2c3d first\n    why",))
 
     prompt = agent.render_prompt(agent.load_prompt("chore"), agent.chore_args(context, Path("/w")))
 
     assert "a1b2c3d first\n    why" in prompt
 
 
+def test_the_chore_prompt_forbids_committing() -> None:
+    prompt = agent.load_prompt("chore")
+
+    assert "Never run `git add`, `git commit`" in prompt and "COMMIT_SUBJECT_PREFIX" not in prompt
+
+
 def _deliver(harness: DevHarness) -> int:
-    return harness.run(lambda prompt: harness.commit_and_report(10))
+    return harness.run(lambda prompt: harness.edit_and_report(10))
+
+
+def _chore_reply(message: str = "tidy", summary: str = "tidied", out_of_scope: tuple[str, ...] = ()) -> str:
+    return envelope("", result={"commit_message": message, "summary": summary, "out_of_scope": list(out_of_scope)})
 
 
 def test_the_chore_runs_in_the_worktree_after_the_pull_request_exists_on_its_diff(tmp_path: Path) -> None:
@@ -82,14 +90,16 @@ def test_the_chore_runs_in_the_worktree_after_the_pull_request_exists_on_its_dif
 
     assert _deliver(harness) == 0
 
-    assert harness.runner.profiles == [
-        AgentProfile(copilot, model="claude-sonnet-5.5", reasoning_effort="medium"),
-        AgentProfile(copilot, model="gpt-6.1-sol", reasoning_effort="medium"),
+    assert [(profile.name, profile.model) for profile in harness.runner.profiles] == [
+        ("developer", "claude-sonnet-5.5"),
+        ("chore", "gpt-6.1-sol"),
+        ("reviewer", "gpt-6.1-sol"),
     ]
+    assert all(profile.cli is copilot for profile in harness.runner.profiles)
     assert seen == [(True, ["src/app.py\tsrc_app.py", "new/name.py\tnew_name.py"])]
     assert harness.calls("pr", "diff") == [("pr", "diff", "https://github.com/owner/repo/pull/99")]
     [prompt] = harness.runner.chore_prompts
-    assert f"`{harness.worktree}`" in prompt and "chore(Checkout): " in prompt and "# REVIEW PROCESS" in prompt
+    assert f"`{harness.worktree}`" in prompt and "# REVIEW PROCESS" in prompt
     assert not (harness.worktree / DIFF_DIR).exists()
 
 
@@ -98,77 +108,61 @@ def test_each_agent_session_is_named_after_its_github_issue(tmp_path: Path) -> N
 
     assert _deliver(harness) == 0
 
-    ticket_name, chore_name = harness.runner.names
+    ticket_name, chore_name, review_name = harness.runner.names
     assert ticket_name is not None and ticket_name.startswith("loop(10) ")
     assert chore_name is not None and chore_name.startswith("loop(")
+    assert review_name is not None and review_name.startswith("loop(")
 
 
-def test_a_chore_commit_is_pushed_to_the_pull_request_branch(tmp_path: Path) -> None:
+def test_the_harness_commits_and_pushes_the_chores_edits(tmp_path: Path) -> None:
     harness = DevHarness(tmp_path)
 
     def chore(prompt: str) -> str:
-        harness.git.commit(_CHORE_SUBJECT)
-        return "tidied"
+        harness.git.edit("src/clean.py")
+        return _chore_reply("tidy imports", "removed unused imports")
 
     harness.runner.chore_handler = chore
 
     assert _deliver(harness) == 0
 
-    assert harness.git.commits[-1].subject == _CHORE_SUBJECT
+    commit = harness.git.commits[-1]
+    assert commit.subject == "chore(Checkout): tidy imports" and "removed unused imports" in commit.body
     assert harness.git.pushes == [(harness.worktree, "add-login-page")] * 2
+    assert not harness.git.dirty
 
 
-def test_a_chore_with_nothing_to_clean_pushes_nothing_more(tmp_path: Path) -> None:
+def test_the_chore_commit_gets_a_default_message_when_the_agent_gave_no_response(tmp_path: Path) -> None:
+    harness = DevHarness(tmp_path)
+    harness.runner.chore_handler = lambda prompt: harness.git.edit() or "tidied"
+
+    assert _deliver(harness) == 0
+
+    assert harness.git.commits[-1].subject.startswith("chore(Checkout): ")
+
+
+def test_a_chore_with_nothing_to_clean_commits_and_pushes_nothing_more(tmp_path: Path) -> None:
     harness = DevHarness(tmp_path)
 
     assert _deliver(harness) == 0
 
     assert len(harness.runner.chore_prompts) == 1
     assert len(harness.git.pushes) == 1 and harness.git.restores == []
+    assert len(harness.git.commits) == 2
 
 
-@pytest.mark.parametrize("subject", ["ccode(Checkout|10): sneaky", "unrelated"])
-def test_a_chore_commit_with_a_foreign_subject_is_discarded_without_failing_the_run(
-    tmp_path: Path, subject: str
-) -> None:
-    harness = DevHarness(tmp_path)
-    harness.runner.chore_handler = lambda prompt: harness.git.commit(subject)
-
-    assert _deliver(harness) == 0
-
-    delivered = harness.git.commits[-1].sha
-    assert [commit.subject for commit in harness.git.commits].count(subject) == 0
-    assert harness.git.restores == [delivered]
-    assert len(harness.git.pushes) == 1
-
-
-def test_a_chore_leaving_the_worktree_dirty_is_discarded(tmp_path: Path) -> None:
+def test_a_chore_that_commits_on_its_own_is_discarded_without_failing_the_run(tmp_path: Path) -> None:
     harness = DevHarness(tmp_path)
 
     def chore(prompt: str) -> str:
-        harness.git.commit(_CHORE_SUBJECT)
-        harness.git.dirty = True
-        return ""
+        harness.git.edit()
+        harness.git.add_commit("chore(Checkout): sneaky")
+        return _chore_reply()
 
     harness.runner.chore_handler = chore
 
     assert _deliver(harness) == 0
 
-    assert len(harness.git.restores) == 1 and len(harness.git.pushes) == 1
-
-
-def test_a_chore_with_two_commits_is_discarded(tmp_path: Path) -> None:
-    harness = DevHarness(tmp_path)
-
-    def chore(prompt: str) -> str:
-        harness.git.commit(_CHORE_SUBJECT)
-        harness.git.commit(_CHORE_SUBJECT)
-        return ""
-
-    harness.runner.chore_handler = chore
-
-    assert _deliver(harness) == 0
-
+    assert [commit.subject for commit in harness.git.commits].count("chore(Checkout): sneaky") == 0
     assert len(harness.git.restores) == 1 and len(harness.git.pushes) == 1
 
 

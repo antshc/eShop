@@ -8,8 +8,8 @@ import pytest
 from workflows.dev.tests.doubles import commit_file, git
 from workflows.dev.commands import CommandError
 from workflows.dev.platforms import GitHubRepo, TicketsTracker
-from workflows.dev.records import Spec
-from workflows.dev.tests.doubles import FakeGhCli
+from workflows.dev.records import PlannedTicket, Spec, TicketWorkflowError
+from workflows.dev.tests.doubles import FakeGhCli, issue
 
 
 def _tracker(gh: FakeGhCli | Mock | None = None) -> TicketsTracker:
@@ -60,3 +60,47 @@ def test_from_origin_reads_the_origin_remote(tmp_path: Path) -> None:
     github_repo = GitHubRepo.from_origin(repo)
 
     assert github_repo.slug == "acme/harness"
+
+
+def test_specs_report_how_many_sub_issues_exist_and_which_are_held_for_a_human() -> None:
+    gh = FakeGhCli(
+        specs=[issue(1, "Spec", labels=["spec"]), issue(2, "Empty", labels=["spec"])],
+        tickets={1: [issue(10, "Open"), issue(11, "Held", labels=["hitl"]), issue(12, "Done", state="CLOSED")]},
+    )
+
+    first, second = _tracker(gh).specs()
+
+    assert (first.sub_issue_total, first.held_tickets, [t.number for t in first.tickets]) == (3, (11,), [10])
+    assert (second.sub_issue_total, second.needs_plan) == (0, True) and not first.needs_plan
+
+
+def test_planned_tickets_become_linked_sub_issues_with_their_blockers_in_the_body() -> None:
+    gh = FakeGhCli()
+    spec = _spec()
+
+    created = _tracker(gh).create_tickets(
+        spec, [PlannedTicket("A", "body a"), PlannedTicket("B", "body b", (0,)), PlannedTicket("C", "c", (0, 1))]
+    )
+
+    assert [ticket.number for ticket in created] == [101, 102, 103]
+    assert spec.tickets == created and spec.sub_issue_total == 3 and spec.has_work
+    bodies = [call[call.index("--body") + 1] for call in gh.calls if call[:2] == ("issue", "create")]
+    assert bodies == ["body a", "body b\n\nBlocked by #101", "c\n\nBlocked by #101, #102"]
+    assert ("api", "--method", "POST", "repos/owner/repo/issues/1/sub_issues", "-F", "sub_issue_id=1101") in gh.calls
+
+
+def test_a_failed_creation_reports_the_tickets_made_so_far_and_leaves_the_spec_unchanged() -> None:
+    gh = FakeGhCli()
+    real = gh.__call__
+
+    def flaky(args: tuple[str, ...]) -> str:
+        if args[:2] == ("issue", "create") and gh.next_issue > 100:
+            raise CommandError("gh issue create", 1, "boom")
+        return real(args)
+
+    spec = _spec()
+
+    with pytest.raises(TicketWorkflowError, match="after creating #101"):
+        _tracker(flaky).create_tickets(spec, [PlannedTicket("A", ""), PlannedTicket("B", "")])
+
+    assert spec.tickets == () and spec.sub_issue_total == 0

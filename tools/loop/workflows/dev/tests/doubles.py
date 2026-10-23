@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import subprocess
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import patch
@@ -16,6 +16,7 @@ from loop import (
 from workflows.dev import run as dev
 from workflows.dev.checkout import GitService
 from workflows.dev.journal import FileExecutionStore
+from workflows.dev.phases import Phase, Phases
 from workflows.dev.platforms import GitHubRepo
 from workflows.dev.records import AgentCommitSubject, Commit, Repository, RepositoryId
 
@@ -52,6 +53,7 @@ class FakeGhCli:
             ]
         )
         self._prs = prs if prs is not None else [_pr(10, "feature/login")]
+        self.next_issue = 100
 
     def __call__(self, args: tuple[str, ...]) -> str:
         self.calls.append(args)
@@ -61,7 +63,14 @@ class FakeGhCli:
             return "https://github.com/owner/repo/pull/99\n"
         if args[:2] == ("pr", "diff"):
             return PR_DIFF
+        if args[:2] == ("issue", "create"):
+            self.next_issue += 1
+            return f"https://github.com/owner/repo/issues/{self.next_issue}\n"
         if args and args[0] == "issue":
+            return ""
+        if args[:1] == ("api",) and "--jq" in args:
+            return f"{int(args[1].rsplit('/', 1)[1]) + 1000}\n"
+        if args[:2] == ("pr", "edit") or args[:2] == ("pr", "ready"):
             return ""
         query = next((arg for arg in args if arg.startswith("query=")), "")
         if "subIssues" in query:
@@ -99,6 +108,7 @@ def _pr(number: int, branch: str, title: str = "Add login page (PR)") -> dict:
         "title": title,
         "url": f"https://github.com/owner/repo/pull/{number}",
         "headRefName": branch,
+        "body": "",
     }
 
 
@@ -115,7 +125,7 @@ def envelope(identifier: str = "Checkout|10", status: str = "completed", result:
     return json.dumps({"identifier": identifier, "status": status, "result": result if result is not None else {}})
 
 
-COMPLETED = {"commit": "abc", "summary": "done", "verification": "ran tests"}
+COMPLETED = {"commit_message": "work", "summary": "done", "verification": "ran tests"}
 
 
 def issue(number: int, title: str, *, state: str = "OPEN", labels: tuple[str, ...] = ()) -> dict:
@@ -136,17 +146,29 @@ class FakeRunner:
     def __init__(self, handler: Handler | None = None) -> None:
         self.handler: Handler = handler or (lambda prompt: "")
         self.chore_handler: Handler = lambda prompt: ""
+        self.plan_handler: Handler = lambda prompt: ""
+        self.verify_handler: Handler = lambda prompt: ""
+        self.review_handler: Handler = lambda prompt: clean_review()
         self.prompts: list[str] = []
         self.chore_prompts: list[str] = []
+        self.plan_prompts: list[str] = []
+        self.verify_prompts: list[str] = []
+        self.review_prompts: list[str] = []
         self.profiles: list[AgentProfile] = []
         self.names: list[str | None] = []
 
     def run(self, profile: AgentProfile, request: AgentRequest, turn: object, context: RunContext) -> CliOutcome:
-        is_chore = request.prompt.startswith("# TASK")
-        (self.chore_prompts if is_chore else self.prompts).append(request.prompt)
+        header = request.prompt.split("\n", 1)[0]
+        prompts, handler = {
+            "# TASK": (self.chore_prompts, self.chore_handler),
+            "# Plan": (self.plan_prompts, self.plan_handler),
+            "# Verify": (self.verify_prompts, self.verify_handler),
+            "# Review": (self.review_prompts, self.review_handler),
+        }.get(header, (self.prompts, self.handler))
+        prompts.append(request.prompt)
         self.profiles.append(profile)
         self.names.append(request.name)
-        output = (self.chore_handler if is_chore else self.handler)(request.prompt)
+        output = handler(request.prompt)
         return CliOutcome(output, NativeHandle(profile.cli.name, f"session{len(self.profiles)}"), 0)
 
 
@@ -181,14 +203,36 @@ class FakeWorkflowGit:
         self.pushed_count = 1
         self.remote_branches = {"main"}
         self.dirty = False
+        self.files = ["src/work.py"]
         self.fetched: list[Path] = []
         self.pushes: list[tuple[Path, str]] = []
         self.restores: list[str] = []
 
-    def commit(self, subject: str) -> str:
+    def add_commit(self, subject: str) -> str:
+        """Seeds history or simulates an agent that committed on its own."""
         sha = f"c{len(self.commits):07d}"
         self.commits.append(Commit(sha, subject))
         return sha
+
+    def edit(self, *files: str) -> None:
+        """Simulates an agent that edited the worktree without committing."""
+        self.dirty = True
+        self.files = list(files) or ["src/work.py"]
+
+    def commit(self, path: Path, subject: str, body: str = "") -> Commit:
+        sha = f"c{len(self.commits):07d}"
+        self.commits.append(Commit(sha, subject, body))
+        self.dirty = False
+        return self.commits[-1]
+
+    def changed_files(self, path: Path) -> list[str]:
+        return list(self.files) if self.dirty else []
+
+    def status(self, path: Path) -> str:
+        return "".join(f" M {file}\n" for file in self.changed_files(path))
+
+    def ref_sha(self, path: Path, ref: str) -> str:
+        return self.commits[-1].sha
 
     def fetch(self, path: Path) -> None:
         self.fetched.append(path)
@@ -259,6 +303,18 @@ class FakeRepositoryGit(GitService):
     def is_clean(self, path: Path) -> bool:
         return self.paths[path].is_clean(path)
 
+    def commit(self, path: Path, subject: str, body: str = "") -> Commit:
+        return self.paths[path].commit(path, subject, body)
+
+    def changed_files(self, path: Path) -> list[str]:
+        return self.paths[path].changed_files(path)
+
+    def status(self, path: Path) -> str:
+        return self.paths[path].status(path)
+
+    def ref_sha(self, path: Path, ref: str) -> str:
+        return self.paths[path].ref_sha(path, ref)
+
 
 class FakeRepositoryGh(FakeGhCli):
     """Returns the target repository's URL when a draft PR is created."""
@@ -299,6 +355,7 @@ class DevHarness:
         self.worktree = tmp_path / "worktree"
         self.git = FakeWorkflowGit()
         self.runner = FakeRunner()
+        self.runner.review_handler = lambda prompt: clean_review(self.git.commits[-1].sha)
         self.git_service = FakeGitService(self.worktree)
         self.gh = FakeGhCli(
             specs=specs
@@ -314,15 +371,20 @@ class DevHarness:
     def prompts(self) -> list[str]:
         return self.runner.prompts
 
-    def commit_and_report(
-        self, number: int, *, initiative: str = "Checkout", summary: str = "done", subject: str | None = None
+    def edit_and_report(
+        self, number: int, *, initiative: str = "Checkout", summary: str = "done", message: str = "work"
     ) -> str:
+        """What a developer agent does: edit the worktree (never commit) and report the commit message it proposes."""
+        self.git.edit()
         identifier = AgentCommitSubject(initiative, number)
-        sha = self.git.commit(subject or f"{identifier.to_subject()}work")
-        return envelope(str(identifier), result={**COMPLETED, "commit": sha, "summary": summary})
+        return envelope(str(identifier), result={**COMPLETED, "commit_message": message, "summary": summary})
 
-    def commit_then(self, response: Callable[[str], str]) -> Handler:
-        return lambda prompt: response(self.git.commit(f"{AgentCommitSubject('Checkout', 10).to_subject()}work"))
+    def edit_then(self, response: Callable[[], str]) -> Handler:
+        def handler(prompt: str) -> str:
+            self.git.edit()
+            return response()
+
+        return handler
 
     def writes(self) -> list[tuple[str, ...]]:
         return [call for call in self.gh.calls if call[0] in ("issue", "pr")]
@@ -337,6 +399,7 @@ class DevHarness:
         github_factory: Callable[[Path], object] | None = None,
         store: FileExecutionStore | None = None,
         argv: list[str] | None = None,
+        phases: Phases | None = None,
     ) -> int:
         if handler is not None:
             self.runner.handler = handler
@@ -352,7 +415,13 @@ class DevHarness:
                 github_factory=github_factory or (lambda checkout: self.github),  # type: ignore[arg-type,return-value]
                 new_agent=new_agent_for(self.runner, self.git_service, self.root),
                 store=store or self.store,
+                phases=phases,
             )
+
+
+def clean_review(head: str = "c0000001") -> str:
+    axes = [{"name": name, "outcome": "completed", "note": ""} for name in ("bugs", "quality", "smells", "initiative")]
+    return envelope("", result={"axes": axes, "findings": [], "posted": [], "head": head})
 
 
 def crash(output: str = "") -> Handler:
@@ -370,3 +439,16 @@ def commit_file(directory: Path, name: str, content: str, message: str) -> None:
     (directory / name).write_text(content)
     git(directory, "add", "-A")
     git(directory, "commit", "-m", message)
+
+
+class RecordingPhases(Phases):
+    """Keeps every finished phase, in the order it ended, for assertions on the trace."""
+
+    def __init__(self) -> None:
+        self.finished: list[Phase] = []
+
+    def _finish(self, phase: Phase, span: object) -> None:
+        self.finished.append(phase)
+
+    def named(self, name: str) -> list[Phase]:
+        return [phase for phase in self.finished if phase.name == name]

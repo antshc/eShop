@@ -63,18 +63,20 @@ redo work they describe:
 
 If you find improvements to make:
 
-1. Make the changes directly on this branch.
+1. Make the changes directly in the worktree.
 2. Run the fastest build and test checks covering every file you changed, and confirm they pass.
    If a check fails and you cannot fix the cause, revert your changes with `git restore` and
-   `git clean -fd`, commit nothing, and say why.
-3. Make exactly one commit with the subject `{{COMMIT_SUBJECT_PREFIX}}<one-line message>` and a
-   concise body listing the refinements and how they were verified. Do not amend, squash, or add
-   a second commit.
+   `git clean -fd`, change nothing, and say why.
+3. Leave your changes uncommitted. Never run `git add`, `git commit`, `git push`, or open a
+   pull request, and never comment, label, or close any Ticket or Spec: Loop commits and
+   publishes your changes after this run ends.
 
 If the code is already clean and well-structured, do nothing.
 
-Leave the worktree clean. Never push, open a pull request, or comment, label, or close any
-Ticket or Spec: Loop does that after this run ends.
+# RESPONSE
 
-Once complete, end your final message with a short summary of the refinements made and
-verified, or why none were needed.
+End your final message with exactly one JSON object:
+
+```json
+{"status": "completed", "result": {"commit_message": "<one-line message for the harness's chore commit, empty when you changed nothing>", "summary": "<refinements made and how they were verified, or why none were needed>", "out_of_scope": ["<pre-existing problem noticed but not fixed>"]}}
+```

@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import json
 import re
+from dataclasses import replace
 from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import Any
 
-from .commands import cli_runner, run_command
+from .commands import CommandError, cli_runner, run_command
 from .records import (
-    Comment, PullRequest, Repository, Spec, Ticket, _AddLabel, _Change, _CommentOn,
+    Comment, PlannedTicket, PullRequest, Repository, Spec, Ticket, TicketWorkflowError, _AddLabel, _Change, _CommentOn,
 )
 
 
@@ -77,9 +78,15 @@ class PullRequestClient:
         self._repo = repo
 
     def create_draft_pull_request(self, head: str, base: str, title: str, body: str = "") -> PullRequest:
-        """One draft PR per head branch: returns the open PR for `head` when there is one, else creates it."""
+        """One draft PR per head branch: returns the open PR for `head` when there is one, else creates it.
+
+        An existing PR's body is replaced by `body` when `body` is given and differs.
+        """
         existing = self._find_pull_request(head)
         if existing is not None:
+            if body and existing.body != body:
+                self.set_body(existing.number, body)
+                return replace(existing, body=body)
             return existing
         output = self._repo.run(
             (
@@ -96,6 +103,13 @@ class PullRequestClient:
         number = int(match.group(1)) if match else 0
         return PullRequest(number=number, title=title, url=output.strip(), branch=head)
 
+    def set_body(self, number: int, body: str) -> None:
+        self._repo.run(("pr", "edit", str(number), "--repo", self._repo.slug, "--body", body))
+
+    def mark_ready(self, pull_request: str) -> None:
+        """Takes a PR out of draft; `pull_request` is its number or URL."""
+        self._repo.run(("pr", "ready", pull_request, "--repo", self._repo.slug))
+
     def _find_pull_request(self, head_branch: str) -> PullRequest | None:
         output = self._repo.run(
             (
@@ -103,14 +117,14 @@ class PullRequestClient:
                 "--repo", self._repo.slug,
                 "--state", "open",
                 "--head", head_branch,
-                "--json", "number,title,url,headRefName",
+                "--json", "number,title,url,headRefName,body",
             )
         )
         prs = json.loads(output)
         if not prs:
             return None
         pr = prs[0]
-        return PullRequest(number=pr["number"], title=pr["title"], url=pr["url"], branch=pr["headRefName"])
+        return PullRequest(number=pr["number"], title=pr["title"], url=pr["url"], branch=pr["headRefName"], body=pr.get("body") or "")
 
 
 _ISSUE_FIELDS = (
@@ -147,7 +161,12 @@ def _labels(node: dict[str, Any]) -> tuple[str, ...]:
     return tuple(label["name"] for label in node["labels"]["nodes"])
 
 
-def _spec(node: dict[str, Any], tickets: tuple[Ticket, ...]) -> Spec:
+def _with_blockers(planned: PlannedTicket, earlier: list[int]) -> str:
+    blockers = [f"#{earlier[index]}" for index in planned.blocked_by if 0 <= index < len(earlier)]
+    return f"{planned.body.rstrip()}\n\nBlocked by {', '.join(blockers)}" if blockers else planned.body
+
+
+def _spec(node: dict[str, Any], tickets: tuple[Ticket, ...], sub_issue_total: int, held: tuple[int, ...]) -> Spec:
     return Spec(
         number=node["number"],
         title=node["title"],
@@ -156,6 +175,8 @@ def _spec(node: dict[str, Any], tickets: tuple[Ticket, ...]) -> Spec:
         body=node["body"],
         comments=_comments(node),
         tickets=tickets,
+        sub_issue_total=sub_issue_total,
+        held_tickets=held,
     )
 
 
@@ -181,7 +202,13 @@ class TicketsTracker:
 
     def specs(self) -> Iterable[Spec]:
         """Every open Spec on the harness tracker, each with its deliverable Tickets."""
-        return [_spec(node, self._tickets(node["number"])) for node in self._spec_issues()]
+        specs = []
+        for node in self._spec_issues():
+            sub_issues = [_ticket(sub_issue) for sub_issue in self._sub_issues(node["number"])]
+            actionable = tuple(ticket for ticket in sub_issues if ticket.actionable)
+            held = tuple(ticket.number for ticket in sub_issues if ticket.state == "open" and not ticket.actionable)
+            specs.append(_spec(node, actionable, len(sub_issues), held))
+        return specs
 
     def update_spec(self, spec: Spec) -> None:
         """Persists the Spec's and its Tickets' pending changes in order; a failed change stays pending."""
@@ -189,9 +216,31 @@ class TicketsTracker:
             self._apply(change)
             spec.acknowledge(change)
 
-    def _tickets(self, spec_number: int) -> tuple[Ticket, ...]:
-        tickets = (_ticket(node) for node in self._sub_issues(spec_number))
-        return tuple(ticket for ticket in tickets if ticket.actionable)
+    def create_tickets(self, spec: Spec, planned: Iterable[PlannedTicket]) -> tuple[Ticket, ...]:
+        """Creates each planned Ticket as an open sub-issue of `spec`, in order, and adds them to `spec.tickets`.
+
+        `blocked_by` indexes become `Blocked by #N` lines in the body. A failure raises
+        `TicketWorkflowError` naming the sub-issues already created, which stay on the tracker.
+        """
+        slug = f"{self._owner}/{self._name}"
+        created: list[Ticket] = []
+        try:
+            for planned_ticket in planned:
+                body = _with_blockers(planned_ticket, [ticket.number for ticket in created])
+                output = self._gh(("issue", "create", "--repo", slug, "--title", planned_ticket.title, "--body", body)).strip()
+                match = re.search(r"/issues/(\d+)", output)
+                if match is None:
+                    raise TicketWorkflowError(f"cannot read the number of the created issue from {output!r}")
+                number = int(match.group(1))
+                issue_id = self._gh(("api", f"repos/{slug}/issues/{number}", "--jq", ".id")).strip()
+                self._gh(("api", "--method", "POST", f"repos/{slug}/issues/{spec.number}/sub_issues", "-F", f"sub_issue_id={issue_id}"))
+                created.append(Ticket(number, planned_ticket.title, "open", (), output, body))
+        except (CommandError, TicketWorkflowError) as exception:
+            made = ", ".join(f"#{ticket.number}" for ticket in created) or "none"
+            raise TicketWorkflowError(f"creating Tickets failed after creating {made}: {exception}") from exception
+        spec.tickets = (*spec.tickets, *created)
+        spec.sub_issue_total += len(created)
+        return tuple(created)
 
     def _spec_issues(self) -> list[dict[str, Any]]:
         pages = json.loads(self._graphql(_SPECS_QUERY))

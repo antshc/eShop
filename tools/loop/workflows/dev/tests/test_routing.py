@@ -8,7 +8,6 @@ from loop import AgentProfile, AgentRequest, AgentWorkspace, copilot
 from workflows.dev.tests.doubles import FakeGitService, FakeRepositoryGh, FakeRepositoryGit, FakeRunner, FakeWorkflowGit, issue, new_agent_for
 from workflows import dev
 from workflows.dev import agent, platforms, run
-from workflows.dev.records import Commit
 from workflows.dev.records import Repository, RepositoryId
 from workflows.dev.tests.doubles import FakeGhCli
 from workflows.dev.records import TicketContext, TicketResult
@@ -29,8 +28,8 @@ def test_harness_specs_route_to_separate_repositories_and_agent_delegates(
     two = Repository(tmp_path / "workspace/two", tmp_path / "workspace/two.worktrees", RepositoryId("owner", "two"))
     one_path, two_path = one.worktrees / "first", two.worktrees / "2_4_second"
     one_git, two_git = FakeWorkflowGit(), FakeWorkflowGit()
-    one_git.commit("ccode(Checkout|9): one history")
-    two_git.commit("ccode(Checkout|19): two history")
+    one_git.add_commit("ccode(Checkout|9): one history")
+    two_git.add_commit("ccode(Checkout|19): two history")
     one_git.pushed_count = two_git.pushed_count = 2
     two_git.remote_branches = {"release/2.4"}
     git = FakeRepositoryGit({one.checkout: one_git, one_path: one_git, two.checkout: two_git, two_path: two_git})
@@ -66,10 +65,10 @@ def test_harness_specs_route_to_separate_repositories_and_agent_delegates(
         assert (context.base_branch, context.feature_branch) == ("main", "first")
         prompt = dev.render_prompt(dev.load_prompt("first"), {"TITLE": context.ticket.title})
         worktree.agent(implementer).run(AgentRequest(prompt))
-        sha = one_git.commit(f"{context.identifier.to_subject()}first")
+        one_git.edit()
         if first_fails:
             return TicketResult(str(context.identifier), "failed", reason="cannot deliver first")
-        return TicketResult(str(context.identifier), "completed", sha, "first delivered", "tested")
+        return TicketResult(str(context.identifier), "completed", "first", "first delivered", "tested")
 
     def implement_review(context: TicketContext, worktree: AgentWorkspace) -> TicketResult:
         delegates.append("two")
@@ -78,12 +77,10 @@ def test_harness_specs_route_to_separate_repositories_and_agent_delegates(
         assert (context.base_branch, context.feature_branch) == ("release/2.4", "2_4_second")
         prompt = dev.render_prompt(dev.load_prompt("second"), {"TITLE": context.ticket.title})
         worktree.agent(implementer).run(AgentRequest(prompt))
-        sha = two_git.commit(f"{context.identifier.to_subject()}second")
-        review = dev.render_prompt(dev.load_prompt("review"), {"COMMIT": sha})
+        two_git.edit()
+        review = dev.render_prompt(dev.load_prompt("review"), {"COMMIT": "pending"})
         worktree.agent(reviewer).run(AgentRequest(review))
-        amended = Commit("reviewed-sha", f"{context.identifier.to_subject()}reviewed")
-        two_git.commits[-1] = amended
-        return TicketResult(str(context.identifier), "completed", amended.sha, "second reviewed", "tested and reviewed")
+        return TicketResult(str(context.identifier), "completed", "second", "second reviewed", "tested and reviewed")
 
     monkeypatch.setattr(run, "HARNESS", harness)
     monkeypatch.setattr(platforms, "GhCli", github_cli)
@@ -107,7 +104,7 @@ def test_harness_specs_route_to_separate_repositories_and_agent_delegates(
     assert one_runner.profiles == [implementer] * (2 if first_fails else 1)
     assert two_runner.profiles == [implementer, reviewer]
     assert one_runner.prompts == ["Implement First task for the first repository"] * (2 if first_fails else 1)
-    assert two_runner.prompts == ["Implement Second task for the second repository", "Review c0000002"]
+    assert two_runner.prompts == ["Implement Second task for the second repository", "Review pending"]
     assert one_git.pushes == ([] if first_fails else [(one_path, "first")])
     assert two_git.pushes == [(two_path, "2_4_second")]
     assert len(two_git.commits) == 3

@@ -14,6 +14,7 @@ from loop import Agent, AgentBuilder, AgentOptions, AgentStartMode, LoopHook, co
 from .backlog import DevDeps, process_specs
 from .checkout import GitService
 from .journal import FileExecutionStore
+from .phases import OtelPhases, Phases
 from .platforms import GithubFactory, TicketsTracker, github_for
 from .repositories import ESHOP, HARNESS, HARNESS_ROOT, RepositoryWorkflow, configured_repositories
 
@@ -45,11 +46,14 @@ DEFAULT_OTEL_ENDPOINT = "http://localhost:4318"
 OTEL_SERVICE_NAME = "loop-dev"
 
 
-def _with_telemetry(new_agent: Callable[[], AgentBuilder], endpoint: str) -> Callable[[], AgentBuilder]:
-    """Reports every Agent Run and Worktree over OTLP/HTTP to `endpoint`; needs the `loop[otel]` extra."""
+def _with_telemetry(new_agent: Callable[[], AgentBuilder], endpoint: str) -> tuple[Callable[[], AgentBuilder], Phases]:
+    """Reports every Agent Run, Worktree and phase over OTLP/HTTP to `endpoint`; needs the `loop[otel]` extra.
+
+    Each actor (engineer, code, planner, developer, verifier, chore, reviewer) is its own Aspire resource.
+    """
     # One observer for the whole run so spans share providers and metrics aggregate.
     observer = otlp_observer(endpoint=endpoint, service_name=OTEL_SERVICE_NAME, resource_per_agent=True)
-    return lambda: new_agent().with_observer(observer)
+    return (lambda: new_agent().with_observer(observer)), OtelPhases(observer)
 
 
 def _parse_args(argv: list[str] | None) -> argparse.Namespace:
@@ -76,6 +80,7 @@ def main(
     store: FileExecutionStore | None = None,
     loop_hooks: tuple[LoopHook, ...] = LOOP_HOOKS,
     repositories: Sequence[RepositoryWorkflow] | None = None,
+    phases: Phases | None = None,
 ) -> int:
     """Delivers harness Specs through configured repositories, defaulting to implementation on the implementation repository."""
     args = _parse_args(argv)
@@ -92,7 +97,7 @@ def main(
             new_agent = partial(Agent, AgentOptions(start_mode=START_MODE, harness_dir=HARNESS_ROOT))
             if not args.no_otel:
                 endpoint = args.otel_endpoint or os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT") or DEFAULT_OTEL_ENDPOINT
-                new_agent = _with_telemetry(new_agent, endpoint)
+                new_agent, phases = _with_telemetry(new_agent, endpoint)
         deps = DevDeps(
             tracker=TicketsTracker(HARNESS.owner_name.owner, HARNESS.owner_name.repo, gh=github.run),
             store=store or FileExecutionStore(log_dir),
@@ -103,6 +108,8 @@ def main(
             github_factory=github_factory,
             max_ticket_failures=MAX_TICKET_FAILURES,
             spec_number=args.spec,
+            phases=phases or Phases(),
+            log_dir=log_dir,
         )
         return process_specs(repositories, deps)
     except Exception as exception:  # last-resort boundary: log and fail, never crash bare

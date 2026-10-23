@@ -19,8 +19,10 @@ exit codes: 0 all delivered, 1 a Ticket failed, 2 usage error"""
 
 DEV_HELP = """usage: loop dev [--spec NUMBER] [--log-dir DIR] [--log-level LEVEL] [--json]
 
-Deliver the Tickets (sub-issues) of an open Spec issue on the harness repo. [mutating]
-Creates a worktree per Spec, runs an agent per Ticket and opens a draft PR.
+Plan, deliver, verify, review and finalize an open Spec issue on the harness repo. [mutating]
+A planner agent creates missing Tickets (sub-issues); the harness runs a developer agent per Ticket
+on one worktree and makes every commit; verifier, chore and reviewer agents follow, and the draft
+PR is marked ready only when every gate passes.
 
 flags:
   --spec NUMBER    deliver only this Spec issue number (default: every open Spec)

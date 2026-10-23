@@ -19,7 +19,7 @@ from workflows.dev import (
 )
 from workflows.dev.records import AgentCommitSubject
 
-COMPLETED = {"commit": "abc", "summary": "done", "verification": "ran tests"}
+COMPLETED = {"commit_message": "abc", "summary": "done", "verification": "ran tests"}
 
 
 def _envelope_dict(identifier: str = "Checkout|10", status: str = "completed", result: dict | None = None) -> dict:
@@ -50,7 +50,7 @@ def test_render_prompt_rejects_a_missing_argument_and_warns_on_an_unused_one(
 
 def test_parse_dev_result_decodes_a_completed_response() -> None:
     assert parse_dev_result(_envelope_dict()) == DevResult(
-        "Checkout|10", "completed", commit="abc", summary="done", verification="ran tests"
+        "Checkout|10", "completed", commit_message="abc", summary="done", verification="ran tests"
     )
 
 
@@ -64,7 +64,7 @@ def test_parse_dev_result_decodes_a_failed_response() -> None:
     "envelope",
     [
         {"identifier": "x", "status": "weird", "result": {}},
-        {"identifier": "x", "status": "completed", "result": {"commit": "a", "summary": "s"}},
+        {"identifier": "x", "status": "completed", "result": {"commit_message": "a", "summary": "s"}},
         {"identifier": "x", "status": "failed", "result": {}},
     ],
 )
@@ -78,8 +78,8 @@ def test_dev_response_requires_a_response_for_the_asked_task() -> None:
     response_without_identifier = json.dumps({"status": "completed", "result": COMPLETED})
 
     result = DevResponse(identifier).decode(f"x {response_without_identifier}")
-    assert (result.identifier, result.commit) == (str(identifier), "abc")
-    assert DevResponse(identifier).decode(f"x {_envelope()}").commit == "abc"
+    assert (result.identifier, result.commit_message) == (str(identifier), "abc")
+    assert DevResponse(identifier).decode(f"x {_envelope()}").commit_message == "abc"
     with pytest.raises(DevResultError, match="no response object"):
         DevResponse(identifier).decode("nothing")
     with pytest.raises(DevResultError, match="does not match task"):

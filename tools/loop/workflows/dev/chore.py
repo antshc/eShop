@@ -7,17 +7,30 @@ import re
 import shutil
 import subprocess
 import textwrap
+from dataclasses import dataclass
 from pathlib import Path
 
 from loop import AgentWorkspace
 
 from .checkout import GitService
 from .commands import CommandError
+from .gates import commit_subject, made_no_commit
+from .phases import Kind, Owner, Phases
 from .platforms import GitHubRepo
-from .records import ChoreContext, ChoreWorkflow, Commit, Spec, TicketWorkflowError, loop_session_name
+from .records import ChoreContext, ChoreResult, ChoreWorkflow, Commit, Spec, TicketWorkflowError, loop_session_name
 
 
 logger = logging.getLogger("workflow.chore")
+
+
+@dataclass(frozen=True)
+class ChoreReport:
+    """How the chore step ended: `committed` (with `commit`), `nothing` to change, or `discarded` (with the violation as `note`)."""
+
+    status: str
+    note: str = ""
+    out_of_scope: tuple[str, ...] = ()
+    commit: str = ""
 
 
 DIFF_DIR = Path("bin") / "review_diff"
@@ -87,48 +100,49 @@ def run_chore(
     *,
     git: GitService,
     github: GitHubRepo,
-) -> bool:
-    """Runs one cleanup agent after the PR exists and pushes its single commit; returns whether it pushed.
+    phases: Phases | None = None,
+) -> ChoreReport:
+    """Runs one cleanup agent after the PR exists; the harness commits its edits as one chore commit and pushes it.
 
     Best effort: any failure restores the worktree to the delivered commit and leaves the PR as it was.
     """
     base_branch, feature_branch = spec.base_branch, spec.feature_branch
     if base_branch is None or feature_branch is None:
         raise TicketWorkflowError(f"cannot resolve branches for Spec {spec.url}")
+    phases = phases or Phases()
     head_before = git.head(worktree.path)
-    prefix = f"chore({spec.initiative}): "
-    try:
-        diff_dir = capture_pull_request_diff(github, pull_request_url, worktree.path)
+    result = ChoreResult()
+    with phases.phase("chore", Kind.AGENT, Owner.CHORE, spec=spec.number) as phase:
         try:
-            commits = tuple(_describe(commit) for commit in git.branch_commits(worktree.path, base_branch))
-            context = ChoreContext(
-                pull_request_url, prefix, base_branch, feature_branch, diff_dir, commits,
-                loop_session_name(spec.number, spec.title),
-            )
-            run_chore_agent(context, worktree)
-        finally:
-            shutil.rmtree(diff_dir, ignore_errors=True)
-        violation = _chore_violation(git, worktree.path, head_before.sha, prefix)
-    except (CommandError, subprocess.CalledProcessError, TicketWorkflowError) as exception:
-        violation = f"chore agent failed: {exception}"
+            diff_dir = capture_pull_request_diff(github, pull_request_url, worktree.path)
+            try:
+                commits = tuple(_describe(commit) for commit in git.branch_commits(worktree.path, base_branch))
+                context = ChoreContext(
+                    pull_request_url, base_branch, feature_branch, diff_dir, commits,
+                    loop_session_name(spec.number, spec.title),
+                )
+                result = run_chore_agent(context, worktree)
+            finally:
+                shutil.rmtree(diff_dir, ignore_errors=True)
+            violation = made_no_commit(git, worktree.path, head_before.sha)
+        except (CommandError, subprocess.CalledProcessError, TicketWorkflowError) as exception:
+            violation = f"chore agent failed: {exception}"
+        phase.gate("the agent did not commit", violation is None, violation or "")
     if violation is not None:
         logger.warning("chore for %s discarded: %s", pull_request_url, violation)
-        git.restore(worktree.path, head_before.sha)
-        return False
-    return git.push_if_ahead(worktree.path, feature_branch, base_branch)
+        with phases.phase("restore", Kind.CODE, Owner.CODE, to=head_before.sha):
+            git.restore(worktree.path, head_before.sha)
+        return ChoreReport("discarded", violation, result.out_of_scope)
+    if not git.changed_files(worktree.path):
+        return ChoreReport("nothing", result.summary, result.out_of_scope)
+    subject = commit_subject(f"chore({spec.initiative}): ", result.commit_message, "refine the change set")
+    with phases.phase("commit-chore", Kind.CODE, Owner.CODE, spec=spec.number) as phase:
+        commit = git.commit(worktree.path, subject, result.summary)
+        phase.set(commit=commit.sha)
+        git.push_if_ahead(worktree.path, feature_branch, base_branch)
+    return ChoreReport("committed", result.summary, result.out_of_scope, commit.sha)
 
 
 def _describe(commit: Commit) -> str:
     entry = f"{commit.sha[:7]} {commit.subject}"
     return f"{entry}\n{textwrap.indent(commit.body, '    ')}" if commit.body else entry
-
-
-def _chore_violation(git: GitService, path: Path, sha_before: str, prefix: str) -> str | None:
-    commits = git.commits_since(path, sha_before)
-    if len(commits) > 1:
-        return f"expected at most one commit since {sha_before}, found {len(commits)}"
-    if commits and not commits[0].subject.startswith(prefix):
-        return f"commit subject {commits[0].subject!r} does not start with {prefix!r}"
-    if not git.is_clean(path):
-        return "the worktree has uncommitted changes"
-    return None

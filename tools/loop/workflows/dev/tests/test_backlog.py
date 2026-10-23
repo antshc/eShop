@@ -6,7 +6,7 @@ import pytest
 
 from workflows.dev.records import Spec
 from workflows.dev.platforms import TicketsTracker
-from workflows.dev.tests.doubles import FakeGhCli
+from workflows.dev.tests.doubles import FakeGhCli, issue
 
 
 def _tracker(gh: FakeGhCli | None = None) -> TicketsTracker:
@@ -44,7 +44,7 @@ def test_specs_carry_only_the_open_unblocked_sub_issues_as_tickets() -> None:
 
 
 def test_a_spec_has_no_work_when_every_sub_issue_is_blocked() -> None:
-    spec = next(iter(_tracker(FakeGhCli(tickets={1: []})).specs()))
+    spec = next(iter(_tracker(FakeGhCli(tickets={1: [issue(13, "Done", state="CLOSED")]})).specs()))
 
     assert spec.tickets == ()
     assert not spec.has_work

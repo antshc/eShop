@@ -24,4 +24,5 @@ services:
       ASPIRE_DASHBOARD_APPLICATION_NAME: eShop-loop
       ASPIRE_DASHBOARD_DATA_DIRECTORY: /data
       ASPIRE_DASHBOARD_PERSISTENCE_MODE: Run
+      DASHBOARD__API__AUTHMODE: Unsecured
     restart: unless-stopped

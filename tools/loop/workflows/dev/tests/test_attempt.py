@@ -31,14 +31,14 @@ def _deliver(harness: DevHarness, delegate: AgentWorkflow, *, spec: Spec | None 
 
 
 def _complete(harness: DevHarness, context: TicketContext) -> TicketResult:
-    sha = harness.git.commit(f"{context.identifier.to_subject()}work")
-    return TicketResult(str(context.identifier), "completed", sha, "done", "ran tests")
+    harness.git.edit()
+    return TicketResult(str(context.identifier), "completed", "work", "done", "ran tests")
 
 
 def test_delegate_receives_selected_ticket_and_refreshed_initiative_history(tmp_path: Path) -> None:
     harness = DevHarness(tmp_path, tickets={1: [issue(10, "First"), issue(11, "Second")]})
-    harness.git.commit("ccode(Checkout|9): earlier")
-    harness.git.commit("ccode(Other|9): unrelated")
+    harness.git.add_commit("ccode(Checkout|9): earlier")
+    harness.git.add_commit("ccode(Other|9): unrelated")
     contexts: list[TicketContext] = []
 
     def delegate(context: TicketContext, worktree: AgentWorkspace) -> TicketResult:
@@ -55,24 +55,28 @@ def test_delegate_receives_selected_ticket_and_refreshed_initiative_history(tmp_
         "c000000 ccode(Checkout|10): work",
     )
     assert [call[2] for call in harness.calls("issue", "close")] == ["10", "11"]
-    assert harness.git.pushes == []
+    assert [commit.subject for commit in harness.git.commits[-2:]] == [
+        "ccode(Checkout|10): work",
+        "ccode(Checkout|11): work",
+    ]
 
 
 def test_retry_excludes_rejected_commits_and_preserves_earlier_work(tmp_path: Path) -> None:
     harness = DevHarness(tmp_path)
-    earlier = harness.git.commit("ccode(Checkout|9): earlier")
+    earlier = harness.git.add_commit("ccode(Checkout|9): earlier")
     contexts: list[TicketContext] = []
 
     def delegate(context: TicketContext, _worktree: AgentWorkspace) -> TicketResult:
         contexts.append(context)
         if len(contexts) == 1:
-            harness.git.commit(f"{context.identifier.to_subject()}rejected")
+            harness.git.edit()
             raise TicketWorkflowError("review found a defect")
         return _complete(harness, context)
 
     assert _deliver(harness, delegate)
     assert contexts[0].initiative_commits == contexts[1].initiative_commits
     assert harness.git.restores == [earlier]
+    assert not harness.git.dirty
     assert harness.store.failed_attempts("https://github.com/owner/repo/issues/10") == 0
     assert len(harness.git.commits) == 3
 
@@ -84,7 +88,7 @@ def test_retry_excludes_rejected_commits_and_preserves_earlier_work(tmp_path: Pa
         ({"status": "unknown"}, "unknown result status"),
         ({"summary": None}, "required"),
         ({"verification": None}, "required"),
-        ({"commit": None}, "required"),
+        ({"commit_message": None}, "required"),
         ({"status": "failed", "reason": None}, "missing reason"),
         ({"status": "failed", "reason": "review rejected"}, "review rejected"),
     ],
@@ -131,3 +135,40 @@ def test_failure_cap_must_be_positive(tmp_path: Path) -> None:
 
     with pytest.raises(TicketWorkflowError, match="at least one"):
         _deliver(harness, delegate, max_failures=0)
+
+
+def test_the_harness_commits_the_agents_edits_with_the_initiative_subject_and_its_report(tmp_path: Path) -> None:
+    harness = DevHarness(tmp_path)
+
+    def delegate(context: TicketContext, _worktree: AgentWorkspace) -> TicketResult:
+        harness.git.edit()
+        return TicketResult(str(context.identifier), "completed", "ccode(Checkout|10): Add the form", "built", "ran tests")
+
+    assert _deliver(harness, delegate)
+    commit = harness.git.commits[-1]
+    assert commit.subject == "ccode(Checkout|10): Add the form"
+    assert "built" in commit.body and "ran tests" in commit.body
+    assert not harness.git.dirty
+
+
+def test_an_agent_that_commits_on_its_own_is_rejected_and_restored(tmp_path: Path) -> None:
+    harness = DevHarness(tmp_path)
+
+    def delegate(context: TicketContext, _worktree: AgentWorkspace) -> TicketResult:
+        harness.git.edit()
+        harness.git.add_commit("agent commit")
+        return TicketResult(str(context.identifier), "completed", "work", "done", "ran tests")
+
+    assert not _deliver(harness, delegate)
+    assert len(harness.git.commits) == 1
+    assert all("only the harness commits" in call[-1] for call in harness.calls("issue", "comment"))
+
+
+def test_an_agent_that_changes_nothing_is_rejected(tmp_path: Path) -> None:
+    harness = DevHarness(tmp_path)
+
+    def delegate(context: TicketContext, _worktree: AgentWorkspace) -> TicketResult:
+        return TicketResult(str(context.identifier), "completed", "work", "done", "ran tests")
+
+    assert not _deliver(harness, delegate)
+    assert any("left no changes" in call[-1] for call in harness.calls("issue", "comment"))

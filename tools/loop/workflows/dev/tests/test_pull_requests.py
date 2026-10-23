@@ -34,3 +34,21 @@ def test_create_draft_pull_request_asks_gh_for_a_draft_from_head_to_base() -> No
         "--body", "body",
         "--draft",
     )
+
+
+def test_an_existing_pr_gets_the_new_body_only_when_it_differs() -> None:
+    gh = FakeGhCli()
+
+    first = _client(gh).create_draft_pull_request("feature/login", "main", "My PR", "initiative\n\nTickets")
+    again = _client(gh).create_draft_pull_request("feature/login", "main", "My PR")
+
+    assert first.body == "initiative\n\nTickets" and again.number == 10
+    assert gh.calls.count(("pr", "edit", "10", "--repo", "owner/repo", "--body", "initiative\n\nTickets")) == 1
+
+
+def test_mark_ready_runs_gh_pr_ready() -> None:
+    gh = FakeGhCli()
+
+    _client(gh).mark_ready("https://github.com/owner/repo/pull/10")
+
+    assert gh.calls == [("pr", "ready", "https://github.com/owner/repo/pull/10", "--repo", "owner/repo")]

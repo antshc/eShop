@@ -11,17 +11,23 @@ from pathlib import Path
 
 from loop import AgentProfile, AgentRequest, AgentWorkspace, copilot
 
+from .phases import Owner
 from .records import (
-    AgentCommitSubject, ChoreContext, Ticket, TicketContext, TicketResult as DevResult,
-    TicketWorkflowError as DevError, loop_session_name,
+    AgentCommitSubject, ChoreContext, ChoreResult, PlanContext, PlanResult, ReviewContext, ReviewResult, Ticket,
+    TicketContext, TicketResult as DevResult, TicketWorkflowError as DevError, VerifyContext, VerifyResult,
+    loop_session_name,
 )
-from .reply import DevResponse
+from .reply import ChoreResponse, DevResponse, PlanResponse, ReviewResponse, VerifyResponse
 
 
 logger = logging.getLogger("workflow.dev")
 
-DEVELOPER = AgentProfile(copilot, model="claude-sonnet-5.5", reasoning_effort="medium")
-CHORE = AgentProfile(copilot, model="gpt-6.1-sol", reasoning_effort="medium")
+# `name` is the agent's Aspire resource: each actor shows as its own lane in the trace.
+PLANNER = AgentProfile(copilot, model="gpt-6.1-sol", reasoning_effort="high", name=Owner.PLANNER)
+DEVELOPER = AgentProfile(copilot, model="claude-sonnet-5.5", reasoning_effort="medium", name=Owner.DEVELOPER)
+VERIFIER = AgentProfile(copilot, model="claude-sonnet-5.5", reasoning_effort="medium", name=Owner.VERIFIER)
+CHORE = AgentProfile(copilot, model="gpt-6.1-sol", reasoning_effort="medium", name=Owner.CHORE)
+REVIEWER = AgentProfile(copilot, model="gpt-6.1-sol", reasoning_effort="high", name=Owner.REVIEWER)
 
 
 PROMPTS = Path(__file__).parent / "prompts"
@@ -96,7 +102,6 @@ def chore_args(context: ChoreContext, worktree: Path) -> dict[str, str]:
     """Values for every placeholder in the chore prompt template."""
     return {
         "PULL_REQUEST_URL": context.pull_request_url,
-        "COMMIT_SUBJECT_PREFIX": context.commit_subject_prefix,
         "WORKTREE_PATH": str(worktree),
         "TARGET_BRANCH": context.base_branch,
         "FEATURE_BRANCH": context.feature_branch,
@@ -105,7 +110,69 @@ def chore_args(context: ChoreContext, worktree: Path) -> dict[str, str]:
     }
 
 
-def chore_pull_request(context: ChoreContext, worktree: AgentWorkspace, *, template: str) -> None:
-    """Runs one fresh chore agent over the pull request's captured diff; its changes stay in the worktree."""
+def chore_pull_request(context: ChoreContext, worktree: AgentWorkspace, *, template: str) -> ChoreResult:
+    """Runs one fresh chore agent over the pull request's captured diff; its edits stay uncommitted in the worktree."""
     prompt = render_prompt(template, chore_args(context, worktree.path))
-    worktree.agent(CHORE).run(AgentRequest(prompt, context.session_name))
+    output = worktree.agent(CHORE).run(AgentRequest(prompt, context.session_name)).output
+    return ChoreResponse().decode(output)
+
+
+def plan_args(context: PlanContext, checkout: Path) -> dict[str, str]:
+    """Values for every placeholder in the planner prompt template."""
+    spec = context.spec
+    feature_branch = spec.feature_branch
+    if feature_branch is None:
+        raise DevError(f"cannot resolve feature branch for Spec {spec.url}")
+    spec_json = {"number": spec.number, "title": spec.title, "url": spec.url, "body": spec.body, "comments": [asdict(comment) for comment in spec.comments]}
+    return {
+        "CHECKOUT_PATH": str(checkout),
+        "SPEC_JSON": json.dumps(spec_json, indent=2),
+        "TARGET_BRANCH": context.base_branch,
+        "FEATURE_BRANCH": feature_branch,
+    }
+
+
+def plan_spec(context: PlanContext, workspace: AgentWorkspace, *, template: str) -> PlanResult:
+    """Runs one read-only planner agent on the checkout and decodes the Tickets it proposes."""
+    prompt = render_prompt(template, plan_args(context, workspace.path))
+    output = workspace.agent(PLANNER).run(AgentRequest(prompt, context.session_name)).output
+    return PlanResponse().decode(output)
+
+
+def verify_args(context: VerifyContext, worktree: Path) -> dict[str, str]:
+    """Values for every placeholder in the verifier prompt template."""
+    return {
+        "WORKTREE_PATH": str(worktree),
+        "FEATURE_BRANCH": context.feature_branch,
+        "TARGET_BRANCH": context.base_branch,
+        "SPEC_JSON": context.spec_json,
+        "TICKETS_JSON": context.tickets_json,
+        "BRANCH_COMMITS": "\n\n".join(context.branch_commits) or "No commits exist on the feature branch yet.",
+        "PULL_REQUEST_URL": context.pull_request_url,
+        "VERIFICATION_SKILLS": "\n   ".join(f"- `{skill}`" for skill in context.skills),
+        "EVIDENCE_DIR": str(context.evidence_dir),
+    }
+
+
+def verify_app(context: VerifyContext, worktree: AgentWorkspace, *, template: str) -> VerifyResult:
+    """Runs one fresh verifier agent that drives the app and fixes code-caused failures, leaving the fixes uncommitted."""
+    prompt = render_prompt(template, verify_args(context, worktree.path))
+    output = worktree.agent(VERIFIER).run(AgentRequest(prompt, context.session_name)).output
+    return VerifyResponse().decode(output)
+
+
+def review_args(context: ReviewContext) -> dict[str, str]:
+    """Values for every placeholder in the reviewer prompt template."""
+    return {
+        "SOURCE_ROOT": str(context.source_root),
+        "PULL_REQUEST_URL": context.pull_request_url,
+        "INITIATIVE": context.initiative,
+        "HEAD_SHA": context.head_sha,
+    }
+
+
+def review_pull_request(context: ReviewContext, workspace: AgentWorkspace, *, template: str) -> ReviewResult:
+    """Runs one read-only reviewer agent on the checkout; it posts its own findings through the `code-review` skill."""
+    prompt = render_prompt(template, review_args(context))
+    output = workspace.agent(REVIEWER).run(AgentRequest(prompt, context.session_name)).output
+    return ReviewResponse().decode(output)

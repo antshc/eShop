@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -9,6 +10,7 @@ from pathlib import Path
 import pytest
 
 from workflows.dev import ESHOP, HARNESS, PROMPT, agent, load_prompt
+from workflows.dev.records import ChoreContext, PlanContext, ReviewContext, Spec, VerifyContext
 from workflows.dev.tests.doubles import DevHarness
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -71,3 +73,46 @@ def test_dev_runs_with_its_resources_and_no_sibling_workflow_files(tmp_path: Pat
         cwd=tmp_path, env=environment, capture_output=True, text=True,
     )
     assert resources.returncode == 0, resources.stderr
+
+
+_PLACEHOLDER = re.compile(r"\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}\}")
+
+
+def _spec() -> Spec:
+    return Spec(1, "Checkout: Add login", "https://github.com/owner/repo/issues/1", ("repo:base:main",), body="body")
+
+
+def test_every_role_prompt_exists_and_its_placeholders_match_the_arguments_exactly() -> None:
+    plan = agent.plan_args(PlanContext(_spec(), "main"), Path("/c"))
+    verify = agent.verify_args(
+        VerifyContext("url", "main", "feature", Path("/e"), (Path("/s/SKILL.md"),), "{}", "[]", ("a1 first",)), Path("/w")
+    )
+    review = agent.review_args(ReviewContext("url", Path("/c"), "Checkout", "abc"))
+    chore = agent.chore_args(ChoreContext("url", "main", "feature", Path("/d")), Path("/w"))
+
+    for name, args in (("plan", plan), ("verify", verify), ("review", review), ("chore", chore)):
+        assert set(_PLACEHOLDER.findall(load_prompt(name))) == set(args), name
+        agent.render_prompt(load_prompt(name), args)
+
+
+@pytest.mark.parametrize("name", ["implement", "chore", "verify"])
+def test_prompts_of_agents_that_edit_forbid_committing(name: str) -> None:
+    prompt = " ".join(load_prompt(name).split())
+
+    assert "git commit" in prompt and "Loop commits" in prompt
+
+
+@pytest.mark.parametrize("name", ["plan", "review"])
+def test_prompts_of_read_only_agents_forbid_editing_and_committing(name: str) -> None:
+    prompt = load_prompt(name)
+
+    assert "never edit" in prompt.lower() or "only read" in prompt.lower()
+    assert "commit" in prompt
+
+
+def test_each_actor_has_its_own_named_profile_for_its_aspire_resource() -> None:
+    profiles = {
+        profile.name for profile in (agent.PLANNER, agent.DEVELOPER, agent.VERIFIER, agent.CHORE, agent.REVIEWER)
+    }
+
+    assert profiles == {"planner", "developer", "verifier", "chore", "reviewer"}

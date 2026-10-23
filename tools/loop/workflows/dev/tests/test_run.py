@@ -62,7 +62,7 @@ def test_prompt_args_carry_only_the_ticket_and_the_initiative_commits() -> None:
 def test_agents_run_in_the_worktree_on_the_feature_branch_based_on_the_target(tmp_path: Path) -> None:
     harness = DevHarness(tmp_path)
 
-    code = harness.run(lambda prompt: harness.commit_and_report(10))
+    code = harness.run(lambda prompt: harness.edit_and_report(10))
 
     assert code == 0
     options = harness.git_service.opened[0]
@@ -84,10 +84,10 @@ def test_a_log_dir_override_writes_logs_to_that_folder(tmp_path: Path) -> None:
 def test_only_the_configured_harness_is_used(tmp_path: Path) -> None:
     harness = DevHarness(tmp_path)
 
-    code = harness.run(lambda prompt: harness.commit_and_report(10))
+    code = harness.run(lambda prompt: harness.edit_and_report(10))
 
     assert code == 0
-    assert harness.git.fetched == [harness.root]
+    assert set(harness.git.fetched) == {harness.root}
     assert harness.git_service.opened[0].repository_path == harness.root
 
 
@@ -113,9 +113,9 @@ def test_an_unexpected_error_is_logged_and_the_process_exits_non_zero(tmp_path: 
 def test_the_spec_is_fetched_from_the_harness_when_it_targets_the_harness_origin(tmp_path: Path) -> None:
     harness = DevHarness(tmp_path)
 
-    code = harness.run(lambda prompt: harness.commit_and_report(10))
+    code = harness.run(lambda prompt: harness.edit_and_report(10))
 
-    assert code == 0 and harness.git.fetched == [harness.root]
+    assert code == 0 and set(harness.git.fetched) == {harness.root}
 
 
 def test_target_repository_match_is_case_insensitive(tmp_path: Path) -> None:
@@ -125,10 +125,10 @@ def test_target_repository_match_is_case_insensitive(tmp_path: Path) -> None:
         tickets={1: [issue(10, "Build the widget")]},
     )
 
-    code = harness.run(lambda prompt: harness.commit_and_report(10, initiative="1"))
+    code = harness.run(lambda prompt: harness.edit_and_report(10, initiative="1"))
 
     assert code == 0
-    assert harness.git.fetched == [harness.root]
+    assert set(harness.git.fetched) == {harness.root}
     assert harness.calls("pr", "create")
 
 
@@ -187,7 +187,7 @@ def test_the_spec_option_delivers_only_that_spec(tmp_path: Path) -> None:
     )
 
     code = harness.run(
-        lambda prompt: harness.commit_and_report(20, initiative="2"),
+        lambda prompt: harness.edit_and_report(20, initiative="2"),
         argv=["--log-dir", str(harness.log_dir), "--spec", "2"],
     )
 
@@ -240,7 +240,7 @@ def test_failures_persist_per_ticket_in_the_days_execution_log(tmp_path: Path) -
 def test_a_first_failure_retries_the_same_ticket_immediately_without_hitl(tmp_path: Path) -> None:
     harness = DevHarness(tmp_path)
 
-    code = harness.run(lambda prompt: "" if len(harness.prompts) == 1 else harness.commit_and_report(10))
+    code = harness.run(lambda prompt: "" if len(harness.prompts) == 1 else harness.edit_and_report(10))
 
     assert code == 0 and len(harness.prompts) == 2
     assert harness.calls("issue", "edit") == []
@@ -257,7 +257,7 @@ def test_two_tickets_each_failing_once_are_not_escalated(tmp_path: Path) -> None
         if number not in seen:
             seen.add(number)
             return ""
-        return harness.commit_and_report(number)
+        return harness.edit_and_report(number)
 
     code = harness.run(handler)
 
@@ -278,7 +278,8 @@ def test_a_failing_worktree_hook_fails_the_spec_with_its_reason(tmp_path: Path) 
 def test_a_prompt_placeholder_with_no_argument_fails_the_run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     template = tmp_path / "implement.md"
     template.write_text("Task {{UNKNOWN}}")
-    (tmp_path / "chore.md").write_text(agent.load_prompt("chore"))
+    for name in ("chore", "plan", "verify", "review"):
+        (tmp_path / f"{name}.md").write_text(agent.load_prompt(name))
     monkeypatch.setattr(agent, "PROMPTS", tmp_path)
     harness = DevHarness(tmp_path)
 
@@ -290,20 +291,14 @@ def test_a_prompt_placeholder_with_no_argument_fails_the_run(tmp_path: Path, mon
 
 def test_a_complete_ticket_is_pushed_prd_and_closed_with_sha_summary_and_verification(tmp_path: Path) -> None:
     harness = DevHarness(tmp_path)
-    reported: list[str] = []
 
-    def handler(prompt: str) -> str:
-        response = harness.commit_and_report(10, summary="added the form")
-        reported.append(json.loads(response)["result"]["commit"])
-        return response
-
-    code = harness.run(handler)
+    code = harness.run(lambda prompt: harness.edit_and_report(10, summary="added the form"))
 
     assert code == 0
     assert harness.git.pushes == [(harness.worktree, "add-login-page")]
     close = harness.calls("issue", "close")[0]
     assert close[2] == "10"
-    assert reported[0] in close[-1] and "added the form" in close[-1] and "ran tests" in close[-1]
+    assert harness.git.commits[1].sha in close[-1] and "added the form" in close[-1] and "ran tests" in close[-1]
     assert len(harness.calls("pr", "create")) == 1
 
 
@@ -311,21 +306,22 @@ def test_two_actionable_tickets_each_get_a_fresh_run_in_order(tmp_path: Path) ->
     harness = DevHarness(tmp_path, tickets=TWO_TICKETS)
     numbers = iter((10, 11))
 
-    code = harness.run(lambda prompt: harness.commit_and_report(next(numbers)))
+    code = harness.run(lambda prompt: harness.edit_and_report(next(numbers)))
 
     assert code == 0 and len(harness.prompts) == 2
     assert [c[2] for c in harness.calls("issue", "close")] == ["10", "11"]
-    assert len(harness.git.pushes) == 1
+    assert len(harness.git.pushes) == 2
 
 
 def test_all_tickets_delivered_comments_the_pull_request_link_on_the_open_spec(tmp_path: Path) -> None:
     harness = DevHarness(tmp_path, tickets=TWO_TICKETS)
     numbers = iter((10, 11))
 
-    harness.run(lambda prompt: harness.commit_and_report(next(numbers)))
+    harness.run(lambda prompt: harness.edit_and_report(next(numbers)))
 
     spec_comments = [c for c in harness.calls("issue", "comment") if c[2] == "1"]
-    assert len(spec_comments) == 1 and "pull" in spec_comments[0][-1]
+    assert len(spec_comments) == 2 and "pull" in spec_comments[0][-1]
+    assert "ready for review" in spec_comments[1][-1]
     assert all(c[2] != "1" for c in harness.calls("issue", "close"))
 
 
@@ -342,7 +338,7 @@ def test_a_ticket_prompt_excludes_the_spec_body_and_other_tickets(tmp_path: Path
 def test_the_prompt_lists_only_this_initiatives_task_commits(tmp_path: Path) -> None:
     harness = DevHarness(tmp_path)
     for subject in ("ccode(Checkout|9): earlier work", "ccode(Other|3): other initiative", "ccode: bare"):
-        harness.git.commit(subject)
+        harness.git.add_commit(subject)
 
     harness.run()
 
@@ -362,7 +358,7 @@ def test_the_prompt_states_when_the_initiative_has_no_task_commits(tmp_path: Pat
 def test_a_hitl_stop_still_pushes_the_commits_of_tickets_closed_in_the_run(tmp_path: Path) -> None:
     harness = DevHarness(tmp_path, tickets=TWO_TICKETS)
 
-    code = harness.run(lambda prompt: harness.commit_and_report(10) if "Checkout|10" in prompt else "")
+    code = harness.run(lambda prompt: harness.edit_and_report(10) if "Checkout|10" in prompt else "")
 
     assert code == 1
     assert len(harness.git.pushes) == 1 and harness.calls("pr", "create")
@@ -371,7 +367,7 @@ def test_a_hitl_stop_still_pushes_the_commits_of_tickets_closed_in_the_run(tmp_p
 
 def test_a_branch_ahead_at_spec_start_is_pushed_from_the_checkout_before_the_worktree_opens(tmp_path: Path) -> None:
     harness = DevHarness(tmp_path)
-    harness.git.commit("ccode(Checkout|9): earlier")
+    harness.git.add_commit("ccode(Checkout|9): earlier")
     pushed_before_open: list[bool] = []
     harness.git_service.on_open = lambda: pushed_before_open.append(bool(harness.git.pushes))
 
@@ -383,8 +379,8 @@ def test_a_branch_ahead_at_spec_start_is_pushed_from_the_checkout_before_the_wor
 
 
 def test_a_spec_with_no_actionable_ticket_and_a_branch_ahead_is_pushed_with_its_pr(tmp_path: Path) -> None:
-    harness = DevHarness(tmp_path, tickets={1: []})
-    harness.git.commit("ccode(Checkout|9): earlier")
+    harness = DevHarness(tmp_path, tickets={1: [issue(13, "Done", state="CLOSED")]})
+    harness.git.add_commit("ccode(Checkout|9): earlier")
 
     code = harness.run()
 
@@ -394,7 +390,7 @@ def test_a_spec_with_no_actionable_ticket_and_a_branch_ahead_is_pushed_with_its_
 
 
 def test_nothing_ahead_means_no_push_and_no_pull_request(tmp_path: Path) -> None:
-    harness = DevHarness(tmp_path, tickets={1: []})
+    harness = DevHarness(tmp_path, tickets={1: [issue(13, "Done", state="CLOSED")]})
 
     code = harness.run()
 
@@ -402,7 +398,7 @@ def test_nothing_ahead_means_no_push_and_no_pull_request(tmp_path: Path) -> None
 
 
 def test_nothing_to_publish_constructs_only_the_harness_tracker_client(tmp_path: Path) -> None:
-    harness = DevHarness(tmp_path, tickets={1: []})
+    harness = DevHarness(tmp_path, tickets={1: [issue(13, "Done", state="CLOSED")]})
     checkouts: list[Path] = []
 
     def github_factory(checkout: Path) -> GitHubRepo:
@@ -417,7 +413,7 @@ def test_nothing_to_publish_constructs_only_the_harness_tracker_client(tmp_path:
 def test_repeating_a_run_with_the_remote_up_to_date_pushes_nothing_more(tmp_path: Path) -> None:
     harness = DevHarness(tmp_path)
 
-    harness.run(lambda prompt: harness.commit_and_report(10))
+    harness.run(lambda prompt: harness.edit_and_report(10))
     harness.run(lambda prompt: "")
 
     assert len(harness.git.pushes) == 1
@@ -429,7 +425,7 @@ def test_a_draft_pr_already_open_for_the_branch_is_not_duplicated(tmp_path: Path
         prs=[{"number": 5, "title": "existing", "url": "https://github.com/owner/repo/pull/5", "headRefName": "add-login-page"}],
     )
 
-    code = harness.run(lambda prompt: harness.commit_and_report(10))
+    code = harness.run(lambda prompt: harness.edit_and_report(10))
 
     assert code == 0 and harness.calls("pr", "create") == []
 
@@ -439,7 +435,7 @@ def test_agent_output_noise_before_the_response_is_ignored(tmp_path: Path) -> No
 
     def handler(prompt: str) -> str:
         noise = envelope("Other|1", result=COMPLETED)
-        return f"working...\n{noise}\nmore text\n{harness.commit_and_report(10)}\n"
+        return f"working...\n{noise}\nmore text\n{harness.edit_and_report(10)}\n"
 
     assert harness.run(handler) == 0
 
@@ -447,13 +443,12 @@ def test_agent_output_noise_before_the_response_is_ignored(tmp_path: Path) -> No
 @pytest.mark.parametrize(
     ("make_handler", "reason"),
     [
-        (lambda h: lambda p: envelope(result=COMPLETED), "HEAD did not change"),
+        (lambda h: lambda p: envelope(result=COMPLETED), "left no changes"),
         (lambda h: lambda p: "no json here", "no response object"),
         (lambda h: lambda p: '{"identifier": "Checkout|10", "status": "completed", "result": {"commit"', "no response object"),
-        (lambda h: h.commit_then(lambda c: envelope("Checkout|11", result={**COMPLETED, "commit": c})), "identifier"),
-        (lambda h: h.commit_then(lambda c: envelope(result={**COMPLETED, "commit": "deadbeef"})), "result.commit"),
-        (lambda h: h.commit_then(lambda c: envelope(result={"commit": c, "summary": "s"})), "required"),
-        (lambda h: lambda p: h.commit_and_report(10, subject="feat: wrong subject"), "does not start with"),
+        (lambda h: h.edit_then(lambda: envelope("Checkout|11", result=COMPLETED)), "identifier"),
+        (lambda h: h.edit_then(lambda: envelope(result={"summary": "s"})), "required"),
+        (lambda h: lambda p: (h.git.edit(), h.git.add_commit("agent commit"), envelope(result=COMPLETED))[-1], "only the harness commits"),
         (lambda h: crash(), "did not exit successfully"),
     ],
 )
@@ -473,38 +468,24 @@ def test_a_failed_validation_restores_the_worktree_and_escalates_the_ticket_and_
     assert harness.calls("issue", "close") == []
 
 
-def test_two_commits_in_one_run_fail_the_run(tmp_path: Path) -> None:
+def test_an_agent_commit_fails_the_run_and_is_discarded(tmp_path: Path) -> None:
     harness = DevHarness(tmp_path)
 
     def handler(prompt: str) -> str:
-        harness.git.commit("ccode(Checkout|10): first")
-        return harness.commit_and_report(10)
+        harness.git.add_commit("ccode(Checkout|10): first")
+        return harness.edit_and_report(10)
 
     code = harness.run(handler)
 
     assert code == 1 and len(harness.git.commits) == 1
-    assert any("exactly one commit" in c[-1] for c in harness.calls("issue", "comment"))
-
-
-def test_an_uncommitted_change_fails_the_run(tmp_path: Path) -> None:
-    harness = DevHarness(tmp_path)
-
-    def handler(prompt: str) -> str:
-        response = harness.commit_and_report(10)
-        harness.git.dirty = True
-        return response
-
-    code = harness.run(handler)
-
-    assert code == 1 and harness.git.dirty is False
-    assert any("uncommitted" in c[-1] for c in harness.calls("issue", "comment"))
+    assert any("only the harness commits" in c[-1] for c in harness.calls("issue", "comment"))
 
 
 def test_a_failed_response_after_committing_discards_the_commit_and_comments_its_reason(tmp_path: Path) -> None:
     harness = DevHarness(tmp_path)
 
     def handler(prompt: str) -> str:
-        harness.git.commit("ccode(Checkout|10): half")
+        harness.git.add_commit("ccode(Checkout|10): half")
         return envelope(status="failed", result={"reason": "needs a decision"})
 
     code = harness.run(handler)
@@ -525,7 +506,7 @@ def test_a_failed_ticket_stops_the_delivery_of_the_next_ticket(tmp_path: Path) -
 def test_only_the_selected_ticket_is_closed(tmp_path: Path) -> None:
     harness = DevHarness(tmp_path, tickets=TWO_TICKETS)
 
-    harness.run(lambda prompt: harness.commit_and_report(10) if "Checkout|10" in prompt else "")
+    harness.run(lambda prompt: harness.edit_and_report(10) if "Checkout|10" in prompt else "")
 
     assert [c[2] for c in harness.calls("issue", "close")] == ["10"]
 
