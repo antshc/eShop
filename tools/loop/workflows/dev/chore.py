@@ -127,6 +127,8 @@ def run_chore(
             violation = made_no_commit(git, worktree.path, head_before.sha)
         except (CommandError, subprocess.CalledProcessError, TicketWorkflowError) as exception:
             violation = f"chore agent failed: {exception}"
+        if violation:
+            phase.fail("Cleanup changes rejected")
         phase.gate("the agent did not commit", violation is None, violation or "")
     if violation is not None:
         logger.warning("chore for %s discarded: %s", pull_request_url, violation)

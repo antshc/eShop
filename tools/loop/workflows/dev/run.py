@@ -6,15 +6,16 @@ import argparse
 import logging
 import os
 from collections.abc import Callable, Sequence
+from contextlib import nullcontext
 from functools import partial
 from pathlib import Path
 
-from loop import Agent, AgentBuilder, AgentOptions, AgentStartMode, LoopHook, configure_logging, otlp_observer
+from loop import Agent, AgentBuilder, AgentOptions, AgentStartMode, LoopHook, Phases, RunObserver, WorkflowRun, configure_logging, otlp_observer
 
 from .backlog import DevDeps, process_specs
 from .checkout import GitService
 from .journal import FileExecutionStore
-from .phases import OtelPhases, Phases
+from .definition import dev_workflow
 from .platforms import GithubFactory, TicketsTracker, github_for
 from .repositories import ESHOP, HARNESS, HARNESS_ROOT, RepositoryWorkflow, configured_repositories
 
@@ -46,14 +47,10 @@ DEFAULT_OTEL_ENDPOINT = "http://localhost:4318"
 OTEL_SERVICE_NAME = "loop-dev"
 
 
-def _with_telemetry(new_agent: Callable[[], AgentBuilder], endpoint: str) -> tuple[Callable[[], AgentBuilder], Phases]:
-    """Reports every Agent Run, Worktree and phase over OTLP/HTTP to `endpoint`; needs the `loop[otel]` extra.
-
-    Each actor (engineer, code, planner, developer, verifier, chore, reviewer) is its own Aspire resource.
-    """
-    # One observer for the whole run so spans share providers and metrics aggregate.
+def _with_telemetry(new_agent: Callable[[], AgentBuilder], endpoint: str) -> tuple[Callable[[], AgentBuilder], RunObserver]:
+    """Share one observer between agent runs and WorkflowBuilder phases."""
     observer = otlp_observer(endpoint=endpoint, service_name=OTEL_SERVICE_NAME, resource_per_agent=True)
-    return (lambda: new_agent().with_observer(observer)), OtelPhases(observer)
+    return (lambda: new_agent().with_observer(observer)), observer
 
 
 def _parse_args(argv: list[str] | None) -> argparse.Namespace:
@@ -67,6 +64,7 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         metavar="URL",
         help=f"OTLP/HTTP base URL for traces and metrics (default: OTEL_EXPORTER_OTLP_ENDPOINT, else {DEFAULT_OTEL_ENDPOINT})",
     )
+    parser.add_argument("--visualize", action="store_true", help="show the phase table (needs loop[visualization])")
     parser.add_argument("--no-otel", action="store_true", help="do not export telemetry")
     return parser.parse_args(argv)
 
@@ -89,7 +87,16 @@ def main(
     # The workflow is the application: it owns the root logger so its own records land in the same file.
     configure_logging(args.log_level, log_file=log_dir / "dev.log", logger="")
 
+    library_logger = logging.getLogger("loop")
+    library_logger.handlers.clear()
+    library_logger.setLevel(logging.NOTSET)
+    library_logger.propagate = True
+    for handler in logging.getLogger().handlers:
+        if isinstance(handler, logging.StreamHandler) and not isinstance(handler, logging.FileHandler):
+            handler.addFilter(_high_level_log)
+
     try:
+        observer = None
         github = github_for(HARNESS, github_factory)
         if repositories is None:
             repositories = configured_repositories(ESHOP)
@@ -97,21 +104,36 @@ def main(
             new_agent = partial(Agent, AgentOptions(start_mode=START_MODE, harness_dir=HARNESS_ROOT))
             if not args.no_otel:
                 endpoint = args.otel_endpoint or os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT") or DEFAULT_OTEL_ENDPOINT
-                new_agent, phases = _with_telemetry(new_agent, endpoint)
-        deps = DevDeps(
-            tracker=TicketsTracker(HARNESS.owner_name.owner, HARNESS.owner_name.repo, gh=github.run),
-            store=store or FileExecutionStore(log_dir),
-            git=git or GitService(),
-            new_agent=new_agent,
-            loop_hooks=loop_hooks,
-            ticket_repository=HARNESS.owner_name,
-            github_factory=github_factory,
-            max_ticket_failures=MAX_TICKET_FAILURES,
-            spec_number=args.spec,
-            phases=phases or Phases(),
-            log_dir=log_dir,
-        )
-        return process_specs(repositories, deps)
+                new_agent, observer = _with_telemetry(new_agent, endpoint)
+        scope = nullcontext(phases) if phases is not None else dev_workflow(
+            observer=observer, visualize=args.visualize,
+        ).run()
+        with scope as active_phases:
+            deps = DevDeps(
+                tracker=TicketsTracker(HARNESS.owner_name.owner, HARNESS.owner_name.repo, gh=github.run),
+                store=store or FileExecutionStore(log_dir),
+                git=git or GitService(),
+                new_agent=new_agent,
+                loop_hooks=loop_hooks,
+                ticket_repository=HARNESS.owner_name,
+                github_factory=github_factory,
+                max_ticket_failures=MAX_TICKET_FAILURES,
+                spec_number=args.spec,
+                phases=active_phases,
+                log_dir=log_dir,
+            )
+            code = process_specs(repositories, deps)
+            if code and isinstance(active_phases, WorkflowRun):
+                active_phases.fail("A Spec failed or needs human input")
+            return code
     except Exception as exception:  # last-resort boundary: log and fail, never crash bare
-        logger.exception("unexpected error: %s", exception)
+        logger.error("dev failed (%s); enable DEBUG for details", type(exception).__name__)
+        logger.debug("unexpected error: %s", exception, exc_info=True)
         return 1
+
+
+def _high_level_log(record: logging.LogRecord) -> bool:
+    return record.levelno >= logging.INFO and (
+        record.name == "loop.workflow" or
+        (record.name == "workflow.dev" and record.levelno >= logging.WARNING)
+    )

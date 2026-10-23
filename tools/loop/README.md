@@ -51,20 +51,55 @@ The PR is marked ready only when every Ticket is delivered, none is held for a h
 `initiative` finding is unresolved. Otherwise it stays a draft and the Spec comment says why. The Spec is never
 closed and the PR never merged.
 
+## Python agent definitions
+
+[agents.py](workflows/dev/agents.py) exports `PLANNER`, `DEVELOPER`, `VERIFIER`, `CHORE`, and
+`REVIEWER`. Edit these Python definitions to configure the CLI, model, reasoning, instructions,
+permissions, additional directories, environment, or timeout. For example:
+
+```python
+from dataclasses import replace
+from pathlib import Path
+from loop import Instructions
+from .agents import DEVELOPER
+
+MY_DEVELOPER = replace(
+    DEVELOPER,
+    instructions=Instructions.from_file(Path(__file__).resolve().parent / "my-developer.md"),
+    add_dirs=(Path("/absolute/shared-context"),),
+    env={"APP_ENV": "development"},
+    timeout_sec=1800,
+)
+```
+
+Import the chosen profile into `agent.py` and pass it to `workspace.agent(profile)`.
+`instructions` also accepts inline text or `Instructions.from_url()` for a public raw-text URL.
+Files resolve from the Python module location, independently of the shell's current directory.
+Loop loads instructions when binding the agent and composes them with each `AgentRequest`.
+Task templates supply the current Ticket/Spec, branch, paths, commits, skills and evidence directory;
+instruction files contain reusable behavior and response contracts, with no template placeholders.
+
+Profiles explicitly retain Copilot's existing tool permission defaults. The workflow's Git/status
+gates still enforce checkout/worktree rules. Managed workspaces and `START_MODE` in `run.py`
+select the working directory; profiles leave `cwd` unset. Session names and fresh runs are preserved.
+
 ## Phases
 
 Every stage is a phase: a named span owned by one actor, of a kind (`engineer`, `code` or `agent`).
-A phase starts as `fail` and earns `success` by exiting cleanly with every gate green; an exception or a
-failed gate keeps it `fail`. Phases nest in the order below and are exported as spans (see [Telemetry](#telemetry)).
+[definition.py](workflows/dev/definition.py) declares them with Loop's `WorkflowBuilder`.
+A phase starts as `running` and becomes `completed` on a clean exit; an exception or a failed gate
+sets `failed`. Unneeded app verification is recorded as `skipped`. Python still owns every loop,
+retry and Git/GitHub operation. Phases nest below and are exported as spans (see [Telemetry](#telemetry)).
+Stable IDs (`spec`, `ticket`) repeat with Spec/Ticket numbers and attempt numbers as attributes.
 
 | Phase | Kind | Owner (resource) | Attributes | Gates (a failed gate fails the phase) |
 |---|---|---|---|---|
-| `spec #N` | engineer | `engineer` | `spec`, `initiative` | - (run root; wraps everything below) |
+| `spec` | engineer | `engineer` | `spec`, `initiative` | - (run root; wraps everything below) |
 | `preflight` | code | `code` | `spec` | - (fails when the base branch is missing) |
 | `plan` | agent | `planner` | `spec`, `planned` | checkout unchanged, plan valid (1-15 Tickets, each blocked only by earlier ones) |
 | `create-tickets` | code | `code` | `spec`, `tickets` | - (fails when a sub-issue cannot be created or linked) |
 | `deliver` | code | `code` | `spec` | - (the worktree's lifetime; wraps the ticket, verify and chore phases) |
-| `ticket #n` | agent | `developer` | `ticket`, `attempt` | response answers this Ticket, the agent did not commit, the agent left changes |
+| `ticket` | agent | `developer` | `ticket`, `attempt` | response answers this Ticket, the agent did not commit, the agent left changes |
 | `commit` | code | `code` | `ticket`, `commit` | - (harness commit of the developer's edits) |
 | `close-ticket` | code | `code` | `ticket`, `commit` | - (evidence comment and closure) |
 | `restore` | code | `code` | `ticket`, `to` | - (`git restore` to the last good head after a rejected attempt or discarded fixes) |
@@ -77,14 +112,18 @@ failed gate keeps it `fail`. Phases nest in the order below and are exported as 
 | `review` | agent | `reviewer` | `spec`, `head`, `findings`, `posted` | checkout unchanged, every axis completed, the reviewed head is the current head |
 | `finalize` | code | `code` | `spec`, `ready` | PR head unchanged since the review |
 
-`ticket #n`, `commit`, `close-ticket` and `publish` repeat per Ticket; `restore` and `escalate` appear only on
-failure; `verify` and `commit-fixes` only when the repository has a verification skill.
+`ticket`, `commit`, `close-ticket` and `publish` repeat per Ticket; `restore` and `escalate` appear only on
+failure; `verify` is skipped when there is no verification skill; `commit-fixes` only runs for accepted fixes.
 
 ## Setup
 
 ```sh
-python -m pip install -r tools/loop/requirements.txt
+python3 -m pip install --upgrade -r tools/loop/requirements.txt
 ```
+
+The requirements pin Loop to merged revision `e9d6647e11dcba0081717bb0959471cf340fa051`,
+which includes the reusable profile API and workflow builder. The `otel` and `visualization`
+extras install reporting dependencies; using the terminal view still requires `--visualize`.
 
 Needs Git, an authenticated `gh`, and the Copilot CLI. Run it from the repository root: Loop
 requires worktrees inside the working directory, so they go to `.loop/worktrees/` (gitignored,
@@ -97,26 +136,42 @@ PYTHONPATH=tools/loop python -m workflows dev --spec <SPEC_ISSUE_NUMBER>
 ```
 
 Agents run on the host with your permissions and the dev workflow creates commits, pushes
-branches and opens draft PRs: read the prompts in [workflows/dev/prompts/](workflows/dev/prompts/)
-first. A Spec needs `repo:target:antshc/eShop` and `repo:base:<branch>` labels; Specs labelled
+branches and opens draft PRs. Read reusable [agent instructions](workflows/dev/instructions/)
+and [task templates](workflows/dev/prompts/) first. A Spec needs `repo:target:antshc/eShop` and `repo:base:<branch>` labels; Specs labelled
 `hitl` are skipped.
 
 | Option | Default | Effect |
 |---|---|---|
 | `--spec NUMBER` | every open Spec | Deliver only this Spec issue. |
-| `--log-dir DIR` | `./.loop` | Journal and `dev.log`. |
+| `--log-dir DIR` | `./.loop` | Journal and DEBUG diagnostic file `dev.log`. |
 | `--log-level LEVEL` | `INFO` | Log level. |
 | `--otel-endpoint URL` | `OTEL_EXPORTER_OTLP_ENDPOINT`, else `http://localhost:4318` | OTLP/HTTP base URL for telemetry. |
 | `--no-otel` | off | Do not export telemetry. |
+| `--visualize` | off | Show the terminal phase table, independently of telemetry. |
+
+## Reporting
+
+Console output contains high-level phase transitions and outcomes. Commit, close-ticket, restore,
+and fix/cleanup commit phases remain in history and telemetry but are hidden from the console and
+terminal table. Prompts, agent responses, command output, gate details and stack traces stay out of
+the console. Use `--log-level DEBUG` to write diagnostics to `<log-dir>/dev.log`.
+
+```sh
+PYTHONPATH=tools/loop python3 -m workflows dev --spec <SPEC_ISSUE_NUMBER> --visualize --no-otel
+```
+
+`WorkflowBuilder` defines reporting, not execution: the existing helpers retain planning, publication,
+harness-owned commits, retries, verification, cleanup and review after worktree closure. Optional
+delegates in `RepositoryWorkflow` remain optional.
 
 ## Telemetry
 
 Every Agent Run, Worktree and **phase** is exported as OpenTelemetry spans and metrics over OTLP/HTTP, as
 service `loop-dev` with one Aspire resource per actor (`engineer`, `code`, `planner`, `developer`, `verifier`,
 `chore`, `reviewer`). Each stage above is a phase span on its owner's resource with `loop.phase.kind`
-(`engineer | code | agent`), `loop.phase.owner`, `loop.phase.status` (`fail` until the stage earns `success`),
-the Spec/Ticket/commit it concerned, and one `loop.gate` event per verified claim. Agent runs from inside the
-worktree nest under the `loop.worktree` span rather than their phase span; correlate them by time and ticket. The default endpoint is the standalone Aspire
+(`engineer | code | agent`), `loop.phase.owner`, `loop.phase.status` (`running`, `completed`, `failed`, `skipped`, or `cancelled`),
+the Spec/Ticket/commit it concerned, and one `loop.gate` event per verified claim. Agent runs nest beneath the active phase, including inside the worktree; a worktree span is the fallback parent.
+`WorkflowBuilder.otel(observer)` and `Agent().with_observer(observer)` share the same observer. The default endpoint is the standalone Aspire
 dashboard. Either run it in Docker (UI on http://localhost:18888):
 
 ```sh

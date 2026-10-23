@@ -59,12 +59,16 @@ def review_pull_request(
             with new_agent().open() as workspace:
                 result = run_review(context, workspace)
         except (subprocess.CalledProcessError, TicketWorkflowError) as exception:
-            phase.fail(f"the reviewer failed: {exception}")
+            phase.fail("Review did not complete")
             return ReviewOutcome(error=f"the reviewer failed: {exception}")
         violation = readonly_violation(git, checkout, head.sha, status)
+        if violation:
+            phase.fail("Reviewer changed the checkout")
         if not phase.gate("reviewer left the checkout unchanged", violation is None, violation or ""):
             return ReviewOutcome(error=violation or "")
         phase.gate("every axis completed", result.completed, "an axis did not complete")
+        if result.head_sha != delivery.head_sha:
+            phase.fail("Reviewed head differs from the current head")
         phase.gate("reviewed the current head", result.head_sha == delivery.head_sha, f"reviewed {result.head_sha!r}")
         phase.set(findings=len(result.findings), posted=len(result.posted))
     return ReviewOutcome(result)
@@ -127,7 +131,7 @@ def finalize(
             except CommandError as exception:
                 ready = False
                 blockers.append(f"marking the PR ready failed: {exception}")
-                phase.fail(blockers[-1])
+                phase.fail("Could not mark the PR ready")
         spec.comment(_summary(delivery, outcome, ready, blockers))
         tracker.update_spec(spec)
     return ready

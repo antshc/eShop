@@ -62,9 +62,13 @@ def plan_spec(
         except (subprocess.CalledProcessError, TicketWorkflowError) as exception:
             return _reject(spec, tracker, phase, f"the planner failed: {exception}")
         violation = readonly_violation(git, checkout, head.sha, status)
+        if violation:
+            phase.fail("Planner changed the checkout")
         if not phase.gate("planner left the checkout unchanged", violation is None, violation or ""):
             return _reject(spec, tracker, phase, violation or "")
         violation = plan_violation(result)
+        if violation:
+            phase.fail("Plan rejected")
         if not phase.gate("plan is valid", violation is None, violation or ""):
             return _reject(spec, tracker, phase, violation or "")
         phase.set(planned=len(result.tickets))
@@ -81,7 +85,7 @@ def plan_spec(
 
 def _reject(spec: Spec, tracker: TicketsTracker, phase: Phase, reason: str) -> bool:
     logger.warning("spec #%s not planned: %s", spec.number, reason)
-    phase.fail(reason)
+    phase.fail("Planning did not complete")
     spec.hand_to_human(f"dev: cannot plan this Spec: {reason}")
     tracker.update_spec(spec)
     return False

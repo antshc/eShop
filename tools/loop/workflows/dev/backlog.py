@@ -72,9 +72,14 @@ def process_specs(repositories: Sequence[RepositoryWorkflow], deps: DevDeps) -> 
 
 
 def _process_spec(spec: Spec, targets: Mapping[str, RepositoryWorkflow], deps: DevDeps) -> Outcome:
-    # The engineer's request is the root of the run's trace.
-    with deps.phases.phase(f"spec #{spec.number}", Kind.ENGINEER, Owner.ENGINEER, spec=spec.number, initiative=spec.initiative):
-        return _route_spec(spec, targets, deps)
+    # The engineer's request groups every phase for this Spec.
+    with deps.phases.phase("spec", Kind.ENGINEER, Owner.ENGINEER, spec=spec.number, initiative=spec.initiative) as phase:
+        outcome = _route_spec(spec, targets, deps)
+        if outcome is Outcome.FAILED:
+            phase.fail("Spec delivery failed")
+        elif outcome is Outcome.SKIPPED:
+            phase.skip("No deliverable work")
+        return outcome
 
 
 def _route_spec(spec: Spec, targets: Mapping[str, RepositoryWorkflow], deps: DevDeps) -> Outcome:
@@ -93,7 +98,8 @@ def _route_spec(spec: Spec, targets: Mapping[str, RepositoryWorkflow], deps: Dev
             return Outcome.SKIPPED
         return _deliver_on_worktree(spec, workflow, deps)
     except (CommandError, LoopHookError, subprocess.CalledProcessError) as exception:
-        logger.error("spec #%s failed: %s", spec.number, exception)
+        logger.error("spec #%s failed; enable DEBUG for details", spec.number)
+        logger.debug("spec #%s failed: %s", spec.number, exception, exc_info=True)
         spec.comment(f"dev: {_describe(exception)}")
         deps.tracker.update_spec(spec)
         return Outcome.FAILED

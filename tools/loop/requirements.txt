@@ -1,2 +1,2 @@
-loop[otel] @ git+https://github.com/antshc/loop
+loop[otel,visualization] @ git+https://github.com/antshc/loop@e9d6647e11dcba0081717bb0959471cf340fa051
 pytest>=8

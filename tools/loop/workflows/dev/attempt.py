@@ -51,7 +51,7 @@ def deliver_tickets(
             attempt += 1
             head_before = git.head(worktree.path)
             context = _ticket_context(spec, ticket, worktree.path, git)
-            with phases.phase(f"ticket #{ticket.number}", Kind.AGENT, Owner.DEVELOPER, ticket=ticket.number, attempt=attempt) as phase:
+            with phases.phase("ticket", Kind.AGENT, Owner.DEVELOPER, ticket=ticket.number, attempt=attempt) as phase:
                 result = _attempt(context, worktree, run_agents, git, head_before, phase)
             if isinstance(result, TicketResult):
                 commit = _commit(context.identifier, ticket, result, worktree.path, git, phases)
@@ -104,15 +104,21 @@ def _attempt(
         phase.fail("agent process did not exit successfully")
         return "agent process did not exit successfully"
     except TicketWorkflowError as exception:
-        phase.fail(str(exception))
+        phase.fail("Implementation did not complete")
         return str(exception)
     violation = _result_violation(context.identifier, result)
+    if violation:
+        phase.fail("Implementation response rejected")
     if not phase.gate("response answers this Ticket and is complete", violation is None, violation or ""):
         return violation or "invalid response"
     violation = made_no_commit(git, worktree.path, head_before.sha)
+    if violation:
+        phase.fail("The agent committed changes")
     if not phase.gate("the agent did not commit", violation is None, violation or ""):
         return violation or "the agent committed"
     violation = left_changes(git, worktree.path)
+    if violation:
+        phase.fail("No changes produced")
     if not phase.gate("the agent left changes to commit", violation is None, violation or ""):
         return violation or "no changes"
     return result

@@ -158,13 +158,12 @@ class FakeRunner:
         self.names: list[str | None] = []
 
     def run(self, profile: AgentProfile, request: AgentRequest, turn: object, context: RunContext) -> CliOutcome:
-        header = request.prompt.split("\n", 1)[0]
         prompts, handler = {
-            "# TASK": (self.chore_prompts, self.chore_handler),
-            "# Plan": (self.plan_prompts, self.plan_handler),
-            "# Verify": (self.verify_prompts, self.verify_handler),
-            "# Review": (self.review_prompts, self.review_handler),
-        }.get(header, (self.prompts, self.handler))
+            "chore": (self.chore_prompts, self.chore_handler),
+            "planner": (self.plan_prompts, self.plan_handler),
+            "verifier": (self.verify_prompts, self.verify_handler),
+            "reviewer": (self.review_prompts, self.review_handler),
+        }.get(profile.name, (self.prompts, self.handler))
         prompts.append(request.prompt)
         self.profiles.append(profile)
         self.names.append(request.name)
@@ -445,10 +444,13 @@ class RecordingPhases(Phases):
     """Keeps every finished phase, in the order it ended, for assertions on the trace."""
 
     def __init__(self) -> None:
+        super().__init__()
         self.finished: list[Phase] = []
 
-    def _finish(self, phase: Phase, span: object) -> None:
-        self.finished.append(phase)
+    def _notify(self, point: str, phase: Phase) -> None:
+        super()._notify(point, phase)
+        if point == "finished":
+            self.finished.append(phase)
 
     def named(self, name: str) -> list[Phase]:
         return [phase for phase in self.finished if phase.name == name]
