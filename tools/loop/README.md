@@ -53,7 +53,7 @@ closed and the PR never merged.
 
 ## Python agent definitions
 
-[agents.py](workflows/dev/agents.py) exports `PLANNER`, `DEVELOPER`, `VERIFIER`, `CHORE`, and
+[agents.py](workflows/dev/agents/agents.py) exports `PLANNER`, `DEVELOPER`, `VERIFIER`, `CHORE`, and
 `REVIEWER`. Edit these Python definitions to configure the CLI, model, reasoning, instructions,
 permissions, additional directories, environment, or timeout. For example:
 
@@ -137,7 +137,7 @@ PYTHONPATH=tools/loop python -m workflows dev --spec <SPEC_ISSUE_NUMBER>
 
 Agents run on the host with your permissions and the dev workflow creates commits, pushes
 branches and opens draft PRs. Read reusable [agent instructions](workflows/dev/instructions/)
-and [task templates](workflows/dev/prompts/) first. A Spec needs `repo:target:antshc/eShop` and `repo:base:<branch>` labels; Specs labelled
+and [task templates](workflows/dev/agents/) first. A Spec needs `repo:target:antshc/eShop` and `repo:base:<branch>` labels; Specs labelled
 `hitl` are skipped.
 
 | Option | Default | Effect |

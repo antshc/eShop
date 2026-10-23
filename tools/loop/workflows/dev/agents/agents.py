@@ -4,9 +4,9 @@ from pathlib import Path
 
 from loop import AgentProfile, Instructions, Permissions, copilot
 
-from .definition import Owner
+from ..definition import Owner
 
-INSTRUCTIONS = Path(__file__).resolve().parent / "instructions"
+INSTRUCTIONS = Path(__file__).resolve().parents[1] / "instructions"
 
 # Keep managed workspace/start-mode selection in run.py. Profiles never override it.
 PLANNER = AgentProfile(

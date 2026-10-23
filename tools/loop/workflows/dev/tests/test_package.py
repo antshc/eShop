@@ -26,7 +26,7 @@ def test_harness_and_default_prompt_paths_survive_the_package_move(
     assert ESHOP.worktrees == ROOT.parents[1] / ".loop" / "worktrees"
     assert str(ESHOP.owner_name) == "antshc/eShop"
     assert HARNESS is ESHOP
-    assert PROMPT == ROOT / "workflows/dev/prompts/implement.md"
+    assert PROMPT == ROOT / "workflows/dev/agents/implement.md"
     assert load_prompt("implement") == PROMPT.read_text()
     assert "{{TICKET_JSON}}" in load_prompt("implement")
 

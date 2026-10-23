@@ -22,12 +22,12 @@ from .reply import ChoreResponse, DevResponse, PlanResponse, ReviewResponse, Ver
 
 logger = logging.getLogger("workflow.dev")
 
-PROMPTS = Path(__file__).parent / "prompts"
+PROMPTS = Path(__file__).parent / "agents"
 PROMPT = PROMPTS / "implement.md"
 
 
 def load_prompt(name: str) -> str:
-    """Reads a named Markdown template from the dev prompt folder."""
+    """Reads a named Markdown template from the dev agents folder."""
     return (PROMPTS / f"{name}.md").read_text()
 
 
