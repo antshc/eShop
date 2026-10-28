@@ -8,14 +8,14 @@ Spec: [docs/specs/deals-page.md](../docs/specs/deals-page.md) (antshc/eShop#2). 
 Extend the **v2** `ListItems` endpoint (`GET /api/catalog/items`, `CatalogApi.GetAllItems`) with an optional `orderBy` query parameter so callers can fetch the cheapest items across the whole catalog. `price` orders by `Price` asc → `Name` asc → `Id` asc; omitted/`name` keeps today's name ordering; anything else returns `400` problem details. v1 endpoints and their `Ok<…>` signatures (`GetAllItemsV1`, `GetItemsByName`, `GetItemsByBrandAndTypeId`, `GetItemsByBrandId`) stay unchanged — split the v2 handler's `Results<Ok<…>, BadRequest<ProblemDetails>>` signature from a shared query helper rather than widening the v1 return types.
 
 **Acceptance criteria:**
-- [ ] `GET /api/catalog/items?api-version=2.0&orderBy=price` returns items with non-decreasing `Price`, ties by `Name` then `Id`; `pageSize=10` returns 10 items whose first is the cheapest in the whole catalog.
-- [ ] Omitting `orderBy` (or `orderBy=name`) and all v1 endpoints keep name ordering; an unknown `orderBy` returns `400` with problem details.
-- [ ] `orderBy` has a `[Description]` (shows in OpenAPI); no schema/DB change.
+- [x] `GET /api/catalog/items?api-version=2.0&orderBy=price` returns items with non-decreasing `Price`, ties by `Name` then `Id`; `pageSize=10` returns 10 items whose first is the cheapest in the whole catalog.
+- [x] Omitting `orderBy` (or `orderBy=name`) and all v1 endpoints keep name ordering; an unknown `orderBy` returns `400` with problem details.
+- [x] `orderBy` has a `[Description]` (shows in OpenAPI); no schema/DB change.
 
 **Verification:**
-- [ ] Tests pass: `dotnet test --project tests/Catalog.FunctionalTests/Catalog.FunctionalTests.csproj` (new v2 tests: price ordering + ties, top-10 = global min, default-order regression, invalid → 400; assert ordering properties, not hard-coded names)
-- [ ] Build succeeds: `dotnet build eShop.slnx`
-- [ ] Manual check: Scalar/OpenAPI for v2 `ListItems` shows `orderBy`; v1 doc unchanged
+- [x] Tests pass: `dotnet test --project tests/Catalog.FunctionalTests/Catalog.FunctionalTests.csproj` (new v2 tests: price ordering + ties, top-10 = global min, default-order regression, invalid → 400; assert ordering properties, not hard-coded names)
+- [x] Build succeeds: `dotnet build eShop.slnx`
+- [x] Manual check: Scalar/OpenAPI for v2 `ListItems` shows `orderBy`; v1 doc unchanged
 
 **Dependencies:**
 None
@@ -28,9 +28,9 @@ None
 S (2 files) — highest risk, do first
 
 ## Checkpoint: After Task 1 (API)
-- [ ] `dotnet build eShop.slnx` succeeds
-- [ ] `dotnet test --project tests/Catalog.FunctionalTests/Catalog.FunctionalTests.csproj` passes
-- [ ] v1 `ListItems` and default v2 ordering unchanged
+- [x] `dotnet build eShop.Web.slnf` succeeds (full `eShop.slnx` needs the MAUI workload locally)
+- [x] `dotnet test --project tests/Catalog.FunctionalTests/Catalog.FunctionalTests.csproj` passes (43/43)
+- [x] v1 `ListItems` and default v2 ordering unchanged
 - [ ] Review with human before proceeding
 
 ## Task 2: Shopper can open /deals and see the 10 cheapest items

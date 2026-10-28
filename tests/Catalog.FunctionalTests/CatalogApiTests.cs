@@ -504,4 +504,102 @@ public sealed class CatalogApiTests : IClassFixture<CatalogApiFixture>
         Assert.Empty(result!.Data);
         Assert.Equal(1000, result.PageIndex);
     }
+
+    private async Task<List<CatalogItem>> GetAllItemsV2Async(string query = "")
+    {
+        var httpClient = CreateHttpClient(new ApiVersion(2.0));
+        var response = await httpClient.GetAsync(
+            $"/api/catalog/items?pageIndex=0&pageSize=1000{query}",
+            TestContext.Current.CancellationToken);
+        response.EnsureSuccessStatusCode();
+        var result = await response.Content.ReadFromJsonAsync<PaginatedItems<CatalogItem>>(
+            _jsonSerializerOptions,
+            TestContext.Current.CancellationToken);
+        return result!.Data.ToList();
+    }
+
+    [Fact]
+    public async Task ListItemsV2OrderByPriceReturnsItemsByPriceThenNameThenId()
+    {
+        var nameOrdered = await GetAllItemsV2Async();
+        var nameRank = nameOrdered.Select((item, index) => (item.Id, index)).ToDictionary(x => x.Id, x => x.index);
+
+        var items = await GetAllItemsV2Async("&orderBy=price");
+
+        // Name ordering comes from the database collation, so use the API's own name order as the tie-break reference.
+        var expected = items
+            .OrderBy(i => i.Price)
+            .ThenBy(i => nameRank[i.Id])
+            .ThenBy(i => i.Id)
+            .Select(i => i.Id);
+        Assert.True(items.Count > 1);
+        Assert.Equal(nameOrdered.Count, items.Count);
+        Assert.Equal(expected, items.Select(i => i.Id));
+    }
+
+    [Fact]
+    public async Task ListItemsV2OrderByPriceFirstPageStartsWithCheapestItemInWholeCatalog()
+    {
+        var allItems = await GetAllItemsV2Async();
+        var httpClient = CreateHttpClient(new ApiVersion(2.0));
+
+        var response = await httpClient.GetAsync(
+            "/api/catalog/items?orderBy=price&pageIndex=0&pageSize=10",
+            TestContext.Current.CancellationToken);
+
+        response.EnsureSuccessStatusCode();
+        var result = await response.Content.ReadFromJsonAsync<PaginatedItems<CatalogItem>>(
+            _jsonSerializerOptions,
+            TestContext.Current.CancellationToken);
+        var page = result!.Data.ToList();
+        Assert.Equal(10, page.Count);
+        Assert.Equal(allItems.Min(i => i.Price), page[0].Price);
+        Assert.Equal(
+            allItems.OrderBy(i => i.Price).Take(10).Select(i => i.Price),
+            page.Select(i => i.Price));
+    }
+
+    [Fact]
+    public async Task ListItemsV2OrderByNameMatchesDefaultNameOrdering()
+    {
+        var defaultOrder = await GetAllItemsV2Async();
+        var byName = await GetAllItemsV2Async("&orderBy=name");
+        var byPrice = await GetAllItemsV2Async("&orderBy=price");
+
+        Assert.Equal(defaultOrder.Select(i => i.Id), byName.Select(i => i.Id));
+        Assert.NotEqual(defaultOrder.Select(i => i.Id), byPrice.Select(i => i.Id));
+    }
+
+    [Fact]
+    public async Task ListItemsV1KeepsNameOrderingAndIgnoresOrderBy()
+    {
+        var defaultOrder = await GetAllItemsV2Async();
+        var httpClient = CreateHttpClient(new ApiVersion(1.0));
+
+        var response = await httpClient.GetAsync(
+            "/api/catalog/items?pageIndex=0&pageSize=1000&orderBy=price",
+            TestContext.Current.CancellationToken);
+
+        response.EnsureSuccessStatusCode();
+        var result = await response.Content.ReadFromJsonAsync<PaginatedItems<CatalogItem>>(
+            _jsonSerializerOptions,
+            TestContext.Current.CancellationToken);
+        Assert.Equal(defaultOrder.Select(i => i.Id), result!.Data.Select(i => i.Id));
+    }
+
+    [Fact]
+    public async Task ListItemsV2WithUnknownOrderByReturnsBadRequestProblemDetails()
+    {
+        var httpClient = CreateHttpClient(new ApiVersion(2.0));
+
+        var response = await httpClient.GetAsync(
+            "/api/catalog/items?pageIndex=0&pageSize=10&orderBy=weight",
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        var problem = await response.Content.ReadFromJsonAsync<Microsoft.AspNetCore.Mvc.ProblemDetails>(
+            _jsonSerializerOptions,
+            TestContext.Current.CancellationToken);
+        Assert.False(string.IsNullOrWhiteSpace(problem?.Detail));
+    }
 }

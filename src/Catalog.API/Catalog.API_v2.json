@@ -637,6 +637,14 @@
             }
           },
           {
+            "name": "orderBy",
+            "in": "query",
+            "description": "The order of the returned items: 'name' (default) or 'price' (cheapest first).",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
             "name": "api-version",
             "in": "query",
             "description": "The API version, in the format 'major.minor'.",
@@ -663,7 +671,7 @@
           "400": {
             "description": "Bad Request",
             "content": {
-              "application/problem+json": {
+              "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetails"
                 }
