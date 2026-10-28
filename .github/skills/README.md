@@ -31,46 +31,51 @@ The upstream shortcuts `/spec`, `/plan`, `/build`, `/test`, `/review`, `/ship` a
 
 ## 2. The workshop feature
 
-**Feature: "Sort catalog by price".** Shoppers can order the catalog list by price (low → high, high → low) or by name. It touches three layers — a good size for one sitting (60–90 min):
+**Feature: "Deals page".** A brand-new `/deals` page that shows the lowest-priced items in the catalog, backed by a brand-new API endpoint. It is purely additive: no existing endpoint, page, component or test is modified, so it cannot conflict with current behaviour. It touches three layers — a good size for one sitting (60–90 min):
 
 | Layer | Where | Change |
 |-------|-------|--------|
-| API | [src/Catalog.API/Apis/CatalogApi.cs](../../src/Catalog.API/Apis/CatalogApi.cs) (v2 `GET /api/catalog/items`) | Optional `sort` query parameter |
-| Web client | [src/WebApp](../../src/WebApp) + [src/WebAppComponents](../../src/WebAppComponents) | Sort dropdown on the Catalog page, state kept in the URL |
-| Tests | [tests/Catalog.FunctionalTests](../../tests/Catalog.FunctionalTests), [e2e/](../../e2e) | API tests + one Playwright test |
+| API | [src/Catalog.API/Apis/CatalogApi.cs](../../src/Catalog.API/Apis/CatalogApi.cs) | New v2 endpoint `GET /api/catalog/items/deals` |
+| Web client | [src/WebAppComponents/Services/CatalogService.cs](../../src/WebAppComponents/Services/CatalogService.cs) | New `GetDeals` method (existing methods untouched) |
+| Web UI | [src/WebApp/Components/Pages](../../src/WebApp/Components/Pages) | New `Deals/Deals.razor` page reusing the existing `CatalogListItem` component |
+| Tests | [tests/Catalog.FunctionalTests](../../tests/Catalog.FunctionalTests), [e2e/](../../e2e) | New test cases/files only |
 
 ### Feature description (paste this into the first prompt)
 
 ```text
-Feature: Sort catalog by price
+Feature: Deals page
 
-As a shopper browsing the catalog, I want to order the product list by price
-or name so that I can find the cheapest or most expensive items quickly.
+As a shopper on a budget, I want a page that lists the cheapest items in the
+catalog so that I can spot bargains without browsing every product.
 
 Behaviour
-- The Catalog page shows a "Sort by" control with: Default, Price: low to high,
-  Price: high to low, Name: A–Z.
-- Default keeps today's ordering, so existing behaviour does not change.
-- The selected sort is kept in the URL (e.g. ?sort=price_asc), survives a page
-  refresh, and works together with the existing brand/type filters and paging.
-- Changing the sort resets the list to page 1.
-- The Catalog API (v2) GET /api/catalog/items accepts an optional `sort`
-  parameter: price_asc | price_desc | name_asc. An unknown value returns
-  400 with a ProblemDetails body. v1 is unchanged.
-- Ties are broken by Id so paging is stable.
+- A new page at /deals shows the lowest-priced catalog items as cards, using
+  the same item card as the Catalog page (picture, name, price, link to item).
+- Items are ordered by price ascending; ties are broken by Id so the order is
+  stable.
+- The page shows 8 items by default. An optional ?count= query string
+  (1 to 24) changes the number shown. An invalid count shows the default.
+- If the catalog is empty the page shows "No deals right now" instead of an
+  empty grid.
+- The Catalog API gets a new v2 endpoint GET /api/catalog/items/deals with an
+  optional `count` parameter (default 8, allowed 1-24). It returns a plain
+  list of catalog items ordered by price then Id. A count outside 1-24
+  returns 400 with a ProblemDetails body. The v1 API is not touched.
+- Existing endpoints, pages, components, routes and tests keep working
+  unchanged. The /deals page is reachable by URL; no existing page is edited.
 
-Out of scope: sorting search / semantic-relevance results, new database
-columns, mobile apps (HybridApp / ClientApp).
+Out of scope: discounts or sale prices (there is no such data), filtering by
+brand/type, paging, caching, the header/footer navigation, mobile apps
+(HybridApp / ClientApp), new database columns.
 ```
 
-Optional stretch goals to give to later phases: "sort also applies to `/items/facets` counts" (it should not), "add `sort` to the OpenAPI doc", "log which sort values are used".
+Optional stretch goals for later phases: "add a Deals link to the header" (the first change to an existing page, so do it as its own task), "response caching on the endpoint", "add `count` to the OpenAPI doc", "log how often /deals is served".
 
 ## 3. Prerequisites
 
 ```bash
 git remote get-url origin          # expect https://github.com/antshc/eShop(.git)
-git switch -c workshop/sort-by-price
-dotnet build eShop.slnx            # baseline must be green
+git switch -c workshop/deals-page dotnet build eShop.slnx            # baseline must be green
 aspire start                       # needs a container runtime
 ```
 
@@ -82,9 +87,9 @@ Top to bottom is the order you run the skills. Each box is a slash command; the 
 
 ```mermaid
 flowchart TB
-    S0["Setup<br/>git switch -c workshop/sort-by-price<br/>dotnet build + test"]
+    S0["Setup<br/>git switch -c workshop/deals-page<br/>dotnet build + test"]
     S1["/interview-me<br/>confirmed requirements"]
-    S2["/spec-driven-development<br/>docs/plans/sort-by-price-spec.md"]
+    S2["/spec-driven-development<br/>docs/plans/deals-page-spec.md"]
     S3["/constraint-driven-development<br/>CONSTRAINTS.md"]
     S4["/planning-and-task-breakdown<br/>tasks/plan.md + tasks/todo.md"]
 
@@ -130,7 +135,7 @@ Each step: **prompt → what to check → output**. Prompts are copy-paste ready
 ```text
 /interview-me <FEATURE>
 ```
-Answer the questions one at a time. Good probes: Should `Default` equal today's order? Which sorts are in the first release? What happens to the page number on change?
+Answer the questions one at a time. Good probes: Is "cheapest" just the lowest price, or should out-of-stock items be excluded? What should `?count=abc` do on the page versus on the API? Should the endpoint return the same item shape as `/items`?
 **Check:** Copilot asks one question at a time and ends with a confirmed summary.
 
 ### Step 2 — Specify (`/spec-driven-development`)
@@ -138,10 +143,10 @@ Answer the questions one at a time. Good probes: Should `Default` equal today's 
 ```text
 /spec-driven-development Write the spec for the confirmed feature. Read
 ARCHITECTURE.md, GLOSSARY.md, docs/concepts/ops-error-handling-and-validation.md
-and the existing Catalog API first. Save it as docs/plans/sort-by-price-spec.md.
+and the existing Catalog API first. Save it as docs/plans/deals-page-spec.md.
 ```
 **Check:** the spec has objective, commands (`dotnet test tests/Catalog.FunctionalTests`), project structure, testing strategy, boundaries, and testable acceptance criteria. Reject vague criteria like "works well".
-**Output:** `docs/plans/sort-by-price-spec.md`. Edit it, then approve.
+**Output:** `docs/plans/deals-page-spec.md`. Edit it, then approve.
 
 ### Step 3 — Quality bar (optional, `/constraint-driven-development`)
 
@@ -155,11 +160,11 @@ not slower than baseline.
 ### Step 4 — Plan (`/planning-and-task-breakdown`)
 
 ```text
-/planning-and-task-breakdown Break docs/plans/sort-by-price-spec.md into
+/planning-and-task-breakdown Break docs/plans/deals-page-spec.md into
 vertical slices with acceptance criteria and dependencies. Save to
 tasks/plan.md and tasks/todo.md.
 ```
-**Check:** ~4–6 tasks, each shippable on its own, e.g. (1) API `sort` param + validation, (2) tie-break + stable paging, (3) WebApp client passes `sort`, (4) Sort dropdown + URL state, (5) Playwright e2e, (6) docs. No task bigger than ~5 files.
+**Check:** ~4–6 tasks, each shippable on its own, e.g. (1) API `deals` endpoint returning the cheapest N, (2) `count` validation + 400 ProblemDetails, (3) `GetDeals` in the WebAppComponents `CatalogService`, (4) `/deals` page with empty state and `?count=`, (5) Playwright e2e, (6) docs. No task bigger than ~5 files.
 
 ### Step 5 — Build with TDD (`/test-driven-development` + `/incremental-implementation`)
 
@@ -185,8 +190,8 @@ For the UI slice use `/frontend-ui-engineering` (accessible `<select>` with a la
 aspire start
 ```
 ```text
-/browser-testing-with-devtools Prove the Catalog page sorts by price low to high and high to low,
-the URL contains ?sort=..., a refresh keeps the order, and the brand filter still works.
+/browser-testing-with-devtools Prove the /deals page shows the 8 cheapest items in ascending price order,
+?count=3 shows exactly 3, an invalid count falls back to 8, and the existing Catalog page still works.
 ```
 Then run `pnpm test:e2e`.
 **Check:** evidence shows the actual prices in order, not just "page loaded"; the browser console is clean.
@@ -198,8 +203,8 @@ Then run `pnpm test:e2e`.
 ```
 Then personas:
 ```text
-@security-auditor Check the new `sort` parameter for injection and error leakage.
-@test-engineer Is the test coverage for sorting sufficient? Which edge cases are missing?
+@security-auditor Check the new `count` parameter and endpoint for abuse (large values, unauthenticated access) and error leakage.
+@test-engineer Is the test coverage for the deals endpoint and page sufficient? Which edge cases are missing (empty catalog, equal prices, count 0/25)?
 ```
 ```text
 /performance-optimization Does ORDER BY price use an index? Any extra queries per page load?
@@ -210,13 +215,13 @@ Then personas:
 
 ```text
 /documentation-and-adrs Update API docs and add an ADR only if a decision needs recording
-(e.g. whitelist sort keys instead of dynamic ordering).
+(e.g. a hard upper bound of 24 on `count`).
 ```
 ```text
 /shipping-and-launch Produce the pre-launch checklist and rollback plan for this change.
 ```
 ```bash
-git push origin workshop/sort-by-price
+git push origin workshop/deals-page
 gh pr create --repo antshc/eShop --base main
 ```
 Never target `dotnet/eShop` (`upstream`).
