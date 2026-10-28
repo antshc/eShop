@@ -76,76 +76,50 @@ aspire start                       # needs a container runtime; see the aspire s
 
 Read first: [ARCHITECTURE.md](../../ARCHITECTURE.md), [GLOSSARY.md](../../GLOSSARY.md), [tests/README.md](../../tests/README.md). Run `dotnet test tests/Catalog.FunctionalTests` once to confirm the baseline passes.
 
-## 4. Sequence diagram — what you do and what Copilot does
+## 4. Flow diagram — the skill chain
+
+Left to right is the order you run the skills. Each box is a slash command; the text under it is the artifact it produces. Dashed boxes are optional, and the loop in the middle repeats per task.
 
 ```mermaid
-sequenceDiagram
-    autonumber
-    actor Dev as You
-    participant CP as Copilot Chat
-    participant SK as Skills (.github/skills)
-    participant Repo as eShop repo
-    participant Aspire as Aspire AppHost
-    participant GH as GitHub (antshc/eShop)
+flowchart LR
+    S0["Setup<br/>git switch -c workshop/sort-by-price<br/>dotnet build + test"]
+    S1["/interview-me<br/>confirmed requirements"]
+    S2["/spec-driven-development<br/>docs/plans/sort-by-price-spec.md"]
+    S3["/constraint-driven-development<br/>CONSTRAINTS.md"]
+    S4["/planning-and-task-breakdown<br/>tasks/plan.md + tasks/todo.md"]
 
-    Note over Dev,Repo: Phase 0 - Setup
-    Dev->>Repo: git switch -c workshop/sort-by-price
-    Dev->>Repo: dotnet build / dotnet test (baseline green)
-
-    Note over Dev,CP: Phase 1 - Clarify and Define
-    Dev->>CP: /interview-me (paste feature description)
-    CP->>SK: load interview-me
-    CP-->>Dev: one question at a time
-    Dev-->>CP: answers (decide defaults, scope)
-    Dev->>CP: /spec-driven-development
-    CP->>SK: load spec-driven-development
-    CP->>Repo: read ARCHITECTURE.md, CatalogApi.cs, Catalog.razor
-    CP-->>Dev: SPEC.md (objective, commands, boundaries, criteria)
-    Dev->>Dev: review and approve the spec
-    opt Quality bar
-        Dev->>CP: /constraint-driven-development
-        CP->>Repo: write CONSTRAINTS.md
+    subgraph LOOP["Build loop - repeat per task"]
+        direction LR
+        B1["/test-driven-development<br/>failing test (RED)"]
+        B2["/incremental-implementation<br/>+ /api-and-interface-design<br/>+ /frontend-ui-engineering<br/>passing code (GREEN)"]
+        B3["/git-workflow-and-versioning<br/>atomic commit"]
+        B1 --> B2 --> B3
+        B3 -. next task .-> B1
     end
 
-    Note over Dev,CP: Phase 2 - Plan
-    Dev->>CP: /planning-and-task-breakdown
-    CP->>SK: load planning-and-task-breakdown
-    CP-->>Dev: tasks/plan.md and tasks/todo.md (vertical slices)
-    Dev->>Dev: approve the plan
+    V["aspire start, then<br/>/verify-mole or<br/>/browser-testing-with-devtools<br/>+ pnpm test:e2e<br/>runtime evidence"]
 
-    Note over Dev,Repo: Phase 3 - Build, one slice at a time
-    loop For each task (API slice, UI slice, URL state, e2e)
-        Dev->>CP: /test-driven-development
-        CP->>Repo: write failing test (RED)
-        CP->>Repo: dotnet test shows failure
-        Dev->>CP: /incremental-implementation
-        CP->>SK: also load api-and-interface-design / frontend-ui-engineering
-        CP->>Repo: minimal code to pass (GREEN)
-        CP->>Repo: dotnet test passes, refactor
-        Dev->>Repo: git commit (git-workflow-and-versioning)
+    subgraph REVIEW["Review - fix findings, rerun tests"]
+        direction LR
+        R1["/code-review-and-quality<br/>@code-reviewer"]
+        R2["@security-auditor<br/>/security-and-hardening"]
+        R3["/performance-optimization"]
+        R1 --> R2 --> R3
     end
 
-    Note over Dev,Aspire: Phase 4 - Verify at runtime
-    Dev->>Aspire: aspire start
-    Dev->>CP: /browser-testing-with-devtools or /verify-mole
-    CP->>Aspire: open WebApp catalog, pick each sort option
-    CP-->>Dev: evidence (order of prices, URL, console clean)
-    Dev->>CP: run Playwright e2e (pnpm test:e2e)
+    D["/documentation-and-adrs<br/>API docs, ADR if needed"]
+    L["/shipping-and-launch<br/>checklist + rollback plan"]
+    P["git push origin<br/>gh pr create --repo antshc/eShop"]
 
-    Note over Dev,CP: Phase 5 - Review
-    Dev->>CP: /code-review-and-quality (or @code-reviewer)
-    CP-->>Dev: five-axis findings (Critical / Important / Suggestion)
-    Dev->>CP: @security-auditor on the new query parameter
-    Dev->>CP: /performance-optimization (ORDER BY, paging, N+1)
-    CP->>Repo: fix findings, rerun tests
+    S0 --> S1 --> S2 -.-> S3 -.-> S4
+    S2 --> S4
+    S4 --> LOOP --> V --> REVIEW --> D --> L --> P
 
-    Note over Dev,GH: Phase 6 - Ship
-    Dev->>CP: /documentation-and-adrs
-    CP->>Repo: update API docs, ARCHITECTURE.md if needed
-    Dev->>CP: /shipping-and-launch
-    CP-->>Dev: launch checklist, rollback plan
-    Dev->>GH: git push origin workshop/sort-by-price, gh pr create
+    classDef optional stroke-dasharray: 5 5;
+    class S3 optional;
 ```
+
+Your job at each arrow: read the output, correct it, and approve before running the next skill (spec, plan, and every RED → GREEN step are the gates).
 
 ## 5. Step-by-step exercises
 
