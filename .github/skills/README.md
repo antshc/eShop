@@ -31,43 +31,38 @@ The upstream shortcuts `/spec`, `/plan`, `/build`, `/test`, `/review`, `/ship` a
 
 ## 2. The workshop feature
 
-**Feature: "Deals page".** A brand-new `/deals` page that shows the lowest-priced items in the catalog, backed by a brand-new API endpoint. It is purely additive: no existing endpoint, page, component or test is modified, so it cannot conflict with current behaviour. It touches three layers — a good size for one sitting (60–90 min):
+**Feature: "Deals page".** A new page for bargain hunters, built as new code next to the existing catalog rather than changing it. It touches three layers — a good size for one sitting (60–90 min):
 
 | Layer | Where | Change |
 |-------|-------|--------|
-| API | [src/Catalog.API/Apis/CatalogApi.cs](../../src/Catalog.API/Apis/CatalogApi.cs) | New v2 endpoint `GET /api/catalog/items/deals` |
-| Web client | [src/WebAppComponents/Services/CatalogService.cs](../../src/WebAppComponents/Services/CatalogService.cs) | New `GetDeals` method (existing methods untouched) |
-| Web UI | [src/WebApp/Components/Pages](../../src/WebApp/Components/Pages) | New `Deals/Deals.razor` page reusing the existing `CatalogListItem` component |
+| API | [src/Catalog.API/Apis/CatalogApi.cs](../../src/Catalog.API/Apis/CatalogApi.cs) | New endpoint |
+| Web client + UI | [src/WebAppComponents](../../src/WebAppComponents), [src/WebApp](../../src/WebApp) | New client method and page |
 | Tests | [tests/Catalog.FunctionalTests](../../tests/Catalog.FunctionalTests), [e2e/](../../e2e) | New test cases/files only |
 
 ### Feature description (paste this into the first prompt)
 
+The description is deliberately vague. Do not add detail: the point of Step 1 is that `/interview-me` pulls the details out of you.
+
 ```text
-Feature: Deals page
-
-As a shopper on a budget, I want a page that lists the cheapest items in the
-catalog so that I can spot bargains without browsing every product.
-
-Behaviour
-- A new page at /deals shows the lowest-priced catalog items as cards, using
-  the same item card as the Catalog page (picture, name, price, link to item).
-- Items are ordered by price ascending; ties are broken by Id so the order is
-  stable.
-- The page shows 8 items by default. An optional ?count= query string
-  (1 to 24) changes the number shown. An invalid count shows the default.
-- If the catalog is empty the page shows "No deals right now" instead of an
-  empty grid.
-- The Catalog API gets a new v2 endpoint GET /api/catalog/items/deals with an
-  optional `count` parameter (default 8, allowed 1-24). It returns a plain
-  list of catalog items ordered by price then Id. A count outside 1-24
-  returns 400 with a ProblemDetails body. The v1 API is not touched.
-- Existing endpoints, pages, components, routes and tests keep working
-  unchanged. The /deals page is reachable by URL; no existing page is edited.
-
-Out of scope: discounts or sale prices (there is no such data), filtering by
-brand/type, paging, caching, the header/footer navigation, mobile apps
-(HybridApp / ClientApp), new database columns.
+I want a "deals" page in the shop where people can quickly find cheap items.
 ```
+
+### Your answer key (read only when `/interview-me` asks)
+
+Don't paste this. Use it to answer the interview questions consistently; if you have better ideas, use those instead.
+
+| Topic | Suggested answer |
+|-------|------------------|
+| What is a "deal"? | Just the lowest-priced items. There is no sale-price data, so no discounts. |
+| How many shown? | 8 by default; optional `?count=` from 1 to 24; an invalid value falls back to 8 on the page. |
+| Ordering | Price ascending, ties by Id so the order is stable. |
+| Where is it? | New page at `/deals`, reachable by URL only; no header/footer link in the first release. |
+| Look | Same item card as the Catalog page (picture, name, price, link to the item). |
+| Empty catalog | Show "No deals right now". |
+| API | New v2 endpoint `GET /api/catalog/items/deals?count=`, plain list of items; `count` outside 1–24 returns 400 with ProblemDetails; v1 untouched. |
+| Must not change | Existing endpoints, pages, components, routes and tests. |
+| Out of scope | Discounts, brand/type filters, paging, caching, mobile apps, new DB columns. |
+| Who uses it / success | Anonymous shoppers; success = the 8 cheapest items are visible in one click-free page load. |
 
 Optional stretch goals for later phases: "add a Deals link to the header" (the first change to an existing page, so do it as its own task), "response caching on the endpoint", "add `count` to the OpenAPI doc", "log how often /deals is served".
 
@@ -128,15 +123,15 @@ Your job at each arrow: read the output, correct it, and approve before running 
 
 ## 5. Step-by-step exercises
 
-Each step: **prompt → what to check → output**. Prompts are copy-paste ready; replace `<FEATURE>` with the description in §2.
+Each step: **prompt → what to check → output**. Prompts are copy-paste ready.
 
 ### Step 1 — Clarify (`/interview-me`)
 
 ```text
-/interview-me <FEATURE>
+/interview-me I want a "deals" page in the shop where people can quickly find cheap items.
 ```
-Answer the questions one at a time. Good probes: Is "cheapest" just the lowest price, or should out-of-stock items be excluded? What should `?count=abc` do on the page versus on the API? Should the endpoint return the same item shape as `/items`?
-**Check:** Copilot asks one question at a time and ends with a confirmed summary.
+Answer the questions one at a time, using the answer key in §2 (or your own ideas). Expect questions like: what counts as a "deal"? how many items? where does the page live? what happens when there are none? does it need an API? what must not change?
+**Check:** Copilot asks one question at a time, doesn't invent answers for you, and ends with a confirmed summary of requirements. That summary is the input to Step 2.
 
 ### Step 2 — Specify (`/spec-driven-development`)
 
