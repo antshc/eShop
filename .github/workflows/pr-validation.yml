@@ -17,6 +17,17 @@ on:
       - '.github/workflows/pr-validation-maui.yml'
 
 jobs:  
+  constraints:
+    # CONSTRAINTS.md is in warn mode: findings are reported in the log but do not fail the run.
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Floor and architecture checks
+        run: node tools/constraints/check.mjs --stage fast --base origin/${{ github.base_ref || 'main' }}
+
   test:
     runs-on: ubuntu-latest    
     steps:

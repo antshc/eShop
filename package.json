@@ -11,7 +11,9 @@
     "test:e2e:report": "playwright show-report",
     "prove": "tsx proof/run.ts",
     "mole": "tsx proof/mole.ts",
-    "test:proof": "tsx --test proof/features.test.ts"
+    "test:proof": "tsx --test proof/features.test.ts",
+    "check:fast": "node tools/constraints/check.mjs --stage fast",
+    "check:task": "node tools/constraints/check.mjs --stage task"
   },
   "keywords": [],
   "author": "",

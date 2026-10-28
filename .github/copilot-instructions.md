@@ -45,6 +45,7 @@ Consult these before searching the code:
 - Run the app: `aspire run` (requires a running container runtime).
 - Tests: `dotnet test <project>` for the smallest affected test project under `tests/`; E2E tests use Playwright (`playwright.config.ts`, `e2e/`).
 - Use the `aspire*`, `dotnet-inspect`, and `playwright-cli` skills for Aspire lifecycle, .NET API lookup, and browser automation.
+- Read [`CONSTRAINTS.md`](../CONSTRAINTS.md) before writing code. Do not weaken it to make a change pass. Run `pnpm check:fast` after edits and `pnpm check:task` before handing work back, and list any findings in the hand-off.
 
 ## 6. Documentation conventions
 
