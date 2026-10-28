@@ -4,7 +4,7 @@ The 25 engineering skills in this folder come from [addyosmani/agent-skills](htt
 
 This README is a hands-on workshop: you drive one small feature through the full lifecycle (idea → spec → plan → build → test → review → ship) using the skills, and verify it in the running eShop.
 
-> The skills in this folder that are not from Osmani (`aspire*`, `dotnet-inspect`, `playwright-cli`, `verify-mole`, `create-verification-skill`, `sssf`) are eShop-specific helpers. The workshop uses a few of them.
+> The workshop uses only the Osmani skills. Other folders here (`aspire*`, `dotnet-inspect`, `playwright-cli`, `verify-mole`, ...) are eShop-specific and not part of it.
 
 ## 1. How to invoke a skill
 
@@ -71,7 +71,7 @@ Optional stretch goals to give to later phases: "sort also applies to `/items/fa
 git remote get-url origin          # expect https://github.com/antshc/eShop(.git)
 git switch -c workshop/sort-by-price
 dotnet build eShop.slnx            # baseline must be green
-aspire start                       # needs a container runtime; see the aspire skill
+aspire start                       # needs a container runtime
 ```
 
 Read first: [ARCHITECTURE.md](../../ARCHITECTURE.md), [GLOSSARY.md](../../GLOSSARY.md), [tests/README.md](../../tests/README.md). Run `dotnet test tests/Catalog.FunctionalTests` once to confirm the baseline passes.
@@ -97,7 +97,7 @@ flowchart TB
         B3 -. next task .-> B1
     end
 
-    V["aspire start, then<br/>/verify-mole or<br/>/browser-testing-with-devtools<br/>+ pnpm test:e2e<br/>runtime evidence"]
+    V["aspire start, then<br/>/browser-testing-with-devtools<br/>+ pnpm test:e2e<br/>runtime evidence"]
 
     subgraph REVIEW["Review - fix findings, rerun tests"]
         direction TB
@@ -185,10 +185,10 @@ For the UI slice use `/frontend-ui-engineering` (accessible `<select>` with a la
 aspire start
 ```
 ```text
-/verify-mole Prove the Catalog page sorts by price low to high and high to low,
+/browser-testing-with-devtools Prove the Catalog page sorts by price low to high and high to low,
 the URL contains ?sort=..., a refresh keeps the order, and the brand filter still works.
 ```
-(or `/browser-testing-with-devtools`). Then run `pnpm test:e2e`.
+Then run `pnpm test:e2e`.
 **Check:** evidence shows the actual prices in order, not just "page loaded"; the browser console is clean.
 
 ### Step 7 — Review (`/code-review-and-quality`)
