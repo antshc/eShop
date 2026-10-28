@@ -78,10 +78,10 @@ Read first: [ARCHITECTURE.md](../../ARCHITECTURE.md), [GLOSSARY.md](../../GLOSSA
 
 ## 4. Flow diagram — the skill chain
 
-Left to right is the order you run the skills. Each box is a slash command; the text under it is the artifact it produces. Dashed boxes are optional, and the loop in the middle repeats per task.
+Top to bottom is the order you run the skills. Each box is a slash command; the text under it is the artifact it produces. Dashed boxes are optional, and the loop in the middle repeats per task.
 
 ```mermaid
-flowchart LR
+flowchart TB
     S0["Setup<br/>git switch -c workshop/sort-by-price<br/>dotnet build + test"]
     S1["/interview-me<br/>confirmed requirements"]
     S2["/spec-driven-development<br/>docs/plans/sort-by-price-spec.md"]
@@ -89,7 +89,7 @@ flowchart LR
     S4["/planning-and-task-breakdown<br/>tasks/plan.md + tasks/todo.md"]
 
     subgraph LOOP["Build loop - repeat per task"]
-        direction LR
+        direction TB
         B1["/test-driven-development<br/>failing test (RED)"]
         B2["/incremental-implementation<br/>+ /api-and-interface-design<br/>+ /frontend-ui-engineering<br/>passing code (GREEN)"]
         B3["/git-workflow-and-versioning<br/>atomic commit"]
@@ -100,7 +100,7 @@ flowchart LR
     V["aspire start, then<br/>/verify-mole or<br/>/browser-testing-with-devtools<br/>+ pnpm test:e2e<br/>runtime evidence"]
 
     subgraph REVIEW["Review - fix findings, rerun tests"]
-        direction LR
+        direction TB
         R1["/code-review-and-quality<br/>@code-reviewer"]
         R2["@security-auditor<br/>/security-and-hardening"]
         R3["/performance-optimization"]
