@@ -50,6 +50,8 @@ Extend the **v2** `ListItems` endpoint (`GET /api/catalog/items`, `CatalogApi.Ge
 | `price` | `Price` asc, then `Name` asc, then `Id` asc |
 | anything else | `400 Bad Request` (problem details) |
 
+The v2 handler returns `Results<Ok<…>, BadRequest<ProblemDetails>>`; the v1 handlers keep their `Ok<…>` types and call a shared query helper, so v1 ordering and OpenAPI are unchanged. Because of this, the v2 OpenAPI document now lists the 400 response as `application/json` (as `GetItemById` already does), not `application/problem+json`.
+
 The Deals page calls `GET /api/catalog/items?orderBy=price&pageIndex=0&pageSize=10`. The v1 endpoint is unchanged. N=10 is a page decision held in the WebApp; the API stays generic.
 
 ### WebApp / WebAppComponents
@@ -57,7 +59,7 @@ The Deals page calls `GET /api/catalog/items?orderBy=price&pageIndex=0&pageSize=
 - `CatalogService` (and `ICatalogService`) gets a method that fetches the N cheapest items through the API above.
 - New page `src/WebApp/Components/Pages/Deals/Deals.razor` at `@page "/deals"` with `[StreamRendering]`:
   - Hero title "Deals" with a short subtitle about the lowest prices, set through the existing `page-header-title` and `page-header-subtitle` sections. It uses the **full-height** hero band (not compact), so the page is **not** added to `IsCompactHero`.
-  - A loading skeleton, then a grid of `CatalogListItem` cards reusing the catalog grid styles, plus the empty state from rule 6.
+  - A loading skeleton, then a grid of `CatalogListItem` cards, plus the empty state from rule 6. The grid uses its own `deals-*` classes and `Deals.razor.css` (same layout as the catalog grid), not `.catalog-items`: `wwwroot/js/catalog-sort.js` re-sorts every `.catalog-items` grid by the shopper's saved sort preference (default name A to Z), which would break the cheapest-first order. Changing that script is an "Ask first" item.
 - `HeaderBar.razor` gets a **Deals** nav link and an `IsDeals` check for `is-current`.
 
 ### Docs
@@ -140,13 +142,13 @@ Following `docs/concepts/ops-test-strategy.md`:
 
 ## Success Criteria
 
-- [ ] Every storefront page shows a **Deals** link in the header; it navigates to `/deals` and is marked current there.
-- [ ] `/deals` shows exactly 10 product cards from the whole catalog (fewer only if the catalog has fewer than 10 items).
-- [ ] Cards are ordered by price ascending, with ties by name. Against the seed data, card 1 is "Guardian Blue Chalk Bag" and card 10 is "Excursion 20L Daypack".
+- [x] Every storefront page shows a **Deals** link in the header; it navigates to `/deals` and is marked current there.
+- [x] `/deals` shows exactly 10 product cards from the whole catalog (fewer only if the catalog has fewer than 10 items).
+- [x] Cards are ordered by price ascending, with ties by name. Against the seed data, card 1 is "Guardian Blue Chalk Bag" and card 10 is "Excursion 20L Daypack".
 - [ ] Cards look and behave like home-catalog cards: clicking one opens the item page, and it can be added to the cart from there.
-- [ ] `GET /api/catalog/items?orderBy=price` (v2) works as specified; the default and v1 behavior are unchanged; an invalid `orderBy` returns 400.
-- [ ] `/deals` uses the full-height hero band with the title "Deals".
-- [ ] `GLOSSARY.md` defines **Deals**.
+- [x] `GET /api/catalog/items?orderBy=price` (v2) works as specified; the default and v1 behavior are unchanged; an invalid `orderBy` returns 400.
+- [x] `/deals` uses the full-height hero band with the title "Deals".
+- [x] `GLOSSARY.md` defines **Deals**.
 - [ ] `dotnet build eShop.slnx` succeeds; the Catalog functional tests and `e2e/DealsTest.spec.ts` pass.
 
 ## Decisions
@@ -155,3 +157,4 @@ Following `docs/concepts/ops-test-strategy.md`:
 2. **Hero:** Full-height hero band.
 3. **Docs:** Add "Deals" to `GLOSSARY.md`.
 4. **Tracking:** Filed as GitHub issue antshc/eShop#2 (labels `spec`, `enhancement`).
+5. **Grid styling:** Deals owns its grid, empty-state and skeleton styles (`deals-*` classes) instead of reusing `.catalog-items`, to stay clear of `catalog-sort.js`. The cost is about 70 lines of CSS duplicated from `Catalog.razor.css`; moving the shared rules to a global stylesheet would remove it but changes the catalog page.
