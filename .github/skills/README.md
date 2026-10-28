@@ -47,23 +47,6 @@ The description is deliberately vague. Do not add detail: the point of Step 1 is
 I want a "deals" page in the shop where people can quickly find cheap items.
 ```
 
-### Your answer key (read only when `/interview-me` asks)
-
-Don't paste this. Use it to answer the interview questions consistently; if you have better ideas, use those instead.
-
-| Topic | Suggested answer |
-|-------|------------------|
-| What is a "deal"? | Just the lowest-priced items. There is no sale-price data, so no discounts. |
-| How many shown? | 8 by default; optional `?count=` from 1 to 24; an invalid value falls back to 8 on the page. |
-| Ordering | Price ascending, ties by Id so the order is stable. |
-| Where is it? | New page at `/deals`, reachable by URL only; no header/footer link in the first release. |
-| Look | Same item card as the Catalog page (picture, name, price, link to the item). |
-| Empty catalog | Show "No deals right now". |
-| API | New v2 endpoint `GET /api/catalog/items/deals?count=`, plain list of items; `count` outside 1–24 returns 400 with ProblemDetails; v1 untouched. |
-| Must not change | Existing endpoints, pages, components, routes and tests. |
-| Out of scope | Discounts, brand/type filters, paging, caching, mobile apps, new DB columns. |
-| Who uses it / success | Anonymous shoppers; success = the 8 cheapest items are visible in one click-free page load. |
-
 Optional stretch goals for later phases: "add a Deals link to the header" (the first change to an existing page, so do it as its own task), "response caching on the endpoint", "add `count` to the OpenAPI doc", "log how often /deals is served".
 
 ## 3. Prerequisites
@@ -130,7 +113,7 @@ Each step: **prompt → what to check → output**. Prompts are copy-paste ready
 ```text
 /interview-me I want a "deals" page in the shop where people can quickly find cheap items.
 ```
-Answer the questions one at a time, using the answer key in §2 (or your own ideas). Expect questions like: what counts as a "deal"? how many items? where does the page live? what happens when there are none? does it need an API? what must not change?
+Answer the questions one at a time with your own ideas. Expect questions like: what counts as a "deal"? how many items? where does the page live? what happens when there are none? does it need an API? what must not change?
 **Check:** Copilot asks one question at a time, doesn't invent answers for you, and ends with a confirmed summary of requirements. That summary is the input to Step 2.
 
 ### Step 2 — Specify (`/spec-driven-development`)
