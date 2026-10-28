@@ -21,6 +21,13 @@ public class CatalogService(HttpClient httpClient) : ICatalogService
         return result!;
     }
 
+    public async Task<CatalogResult> GetCheapestCatalogItems(int count)
+    {
+        var uri = $"{remoteServiceBaseUrl}items?orderBy=price&pageIndex=0&pageSize={count}";
+        var result = await httpClient.GetFromJsonAsync<CatalogResult>(uri);
+        return result!;
+    }
+
     public async Task<List<CatalogItem>> GetCatalogItems(IEnumerable<int> ids)
     {
         var uri = $"{remoteServiceBaseUrl}items/by?ids={string.Join("&ids=", ids)}";

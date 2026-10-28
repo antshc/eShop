@@ -1,0 +1,57 @@
+@page "/deals"
+@inject CatalogService CatalogService
+@attribute [StreamRendering]
+
+<PageTitle>Deals | AdventureWorks</PageTitle>
+<SectionContent SectionName="page-header-title">Deals</SectionContent>
+<SectionContent SectionName="page-header-subtitle">The lowest-priced gear in the catalog, cheapest first.</SectionContent>
+
+<div class="deals">
+    @if (catalogResult is null)
+    {
+        <div class="deals-results" role="status" aria-label="Loading deals">
+            <div class="deals-items">
+                @for (var i = 0; i < DealsCount; i++)
+                {
+                    <div class="deals-card-skeleton" aria-hidden="true">
+                        <div class="deals-skeleton-media"></div>
+                        <div class="deals-skeleton-line"></div>
+                        <div class="deals-skeleton-line short"></div>
+                    </div>
+                }
+            </div>
+        </div>
+    }
+    else if (catalogResult.Data.Count == 0)
+    {
+        <div class="deals-results">
+            <div class="deals-empty">
+                <h2>No deals right now</h2>
+                <p>Check back soon, or browse the full collection.</p>
+                <a class="button button-primary" href="">Shop all</a>
+            </div>
+        </div>
+    }
+    else
+    {
+        <div class="deals-results">
+            <div class="deals-items">
+                @foreach (var item in catalogResult.Data)
+                {
+                    <CatalogListItem Item="@item" />
+                }
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    const int DealsCount = 10;
+
+    CatalogResult? catalogResult;
+
+    protected override async Task OnInitializedAsync()
+    {
+        catalogResult = await CatalogService.GetCheapestCatalogItems(DealsCount);
+    }
+}

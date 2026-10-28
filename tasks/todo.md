@@ -39,13 +39,13 @@ S (2 files) — highest risk, do first
 Add a cheapest-items client method and the `/deals` page so a shopper visiting `/deals` sees the 10 lowest-priced catalog items as normal product cards. `ICatalogService`/`CatalogService` gain a method calling `api/catalog/items?orderBy=price&pageIndex=0&pageSize={n}`; the HybridApp `CatalogService` (also implements `ICatalogService`) gets the same member. New `Pages/Deals/Deals.razor` at `@page "/deals"` with `[StreamRendering]`, mirroring `Catalog.razor`: hero title "Deals" + subtitle via `page-header-title`/`page-header-subtitle` (full-height hero — **not** added to `IsCompactHero`), loading skeleton, a `catalog-items` grid of `CatalogListItem`, and a `catalog-empty` state. No filters, sort control, or pagination. N=10 is a constant in the page.
 
 **Acceptance criteria:**
-- [ ] `/deals` renders at most 10 `CatalogListItem` cards from the whole catalog ordered price asc (ties by name); cards link to the existing item page.
-- [ ] Zero items → empty state (not blank); while loading → skeleton; hero is full-height with title "Deals".
-- [ ] No brand/type filters, sort control or pagination on the page; existing catalog CSS classes reused (add `Deals.razor.css` only if needed).
+- [x] `/deals` renders at most 10 `CatalogListItem` cards from the whole catalog ordered price asc (ties by name); cards link to the existing item page.
+- [x] Zero items → empty state (not blank); while loading → skeleton; hero is full-height with title "Deals".
+- [x] No brand/type filters, sort control or pagination on the page; existing catalog CSS classes reused (add `Deals.razor.css` only if needed).
 
 **Verification:**
-- [ ] Build succeeds: `dotnet build eShop.slnx`
-- [ ] Manual check: `aspire run`, open `/deals` — first card "Guardian Blue Chalk Bag" ($21.99), 10th "Excursion 20L Daypack" ($64.99); clicking a card opens its item page; layout matches home grid (optional `pnpm mole open /deals && pnpm mole snapshot`)
+- [x] Build succeeds: `dotnet build eShop.slnx`
+- [x] Manual check: `aspire run`, open `/deals` — first card "Guardian Blue Chalk Bag" ($21.99), 10th "Excursion 20L Daypack" ($64.99); clicking a card opens its item page; layout matches home grid (optional `pnpm mole open /deals && pnpm mole snapshot`)
 
 **Dependencies:**
 Blocked by Task 1
@@ -65,14 +65,14 @@ M (4 files)
 Make Deals reachable in one click and cover the whole flow end-to-end. `HeaderBar.razor` gets a **Deals** nav link next to **Shop all** (`href="deals"`) and an `IsDeals` check that adds `is-current` on the Deals page. Add an anonymous Playwright spec `e2e/DealsTest.spec.ts` and register it in the `'e2e tests without logged in'` project's `testMatch` in `playwright.config.ts` (files are matched by name, so it won't run otherwise).
 
 **Acceptance criteria:**
-- [ ] Every storefront page shows **Deals** next to **Shop all**; it navigates to `/deals` and has `is-current` there (and only there).
-- [ ] E2E: click **Deals** → `/deals`; 10 `.catalog-product` cards with non-decreasing prices; card 1 "Guardian Blue Chalk Bag", card 10 "Excursion 20L Daypack"; clicking a card opens its item page.
-- [ ] `DealsTest.spec.ts` runs under the anonymous project; existing E2E specs unaffected.
+- [x] Every storefront page shows **Deals** next to **Shop all**; it navigates to `/deals` and has `is-current` there (and only there).
+- [x] E2E: click **Deals** → `/deals`; 10 `.catalog-product` cards with non-decreasing prices; card 1 "Guardian Blue Chalk Bag", card 10 "Excursion 20L Daypack"; clicking a card opens its item page.
+- [x] `DealsTest.spec.ts` runs under the anonymous project; existing E2E specs unaffected.
 
 **Verification:**
-- [ ] Tests pass: `pnpm exec playwright test e2e/DealsTest.spec.ts` and `pnpm exec playwright test e2e/BrowseItemTest.spec.ts`
-- [ ] Build succeeds: `dotnet build eShop.slnx`
-- [ ] Manual check: header link visible on home, item, cart pages; highlighted only on `/deals`
+- [x] Tests pass: `pnpm exec playwright test e2e/DealsTest.spec.ts` and `pnpm exec playwright test e2e/BrowseItemTest.spec.ts`
+- [x] Build succeeds: `dotnet build eShop.slnx`
+- [x] Manual check: header link visible on home, item, cart pages; highlighted only on `/deals`
 
 **Dependencies:**
 Blocked by Task 2
@@ -91,11 +91,11 @@ S–M (3 files)
 Add the **Deals** term to `GLOSSARY.md` under **Language**: the 10 lowest-priced catalog items, cheapest first. A deal is not a discount; prices are the normal catalog price. No other glossary or `ARCHITECTURE.md` changes (spec "Ask first").
 
 **Acceptance criteria:**
-- [ ] `GLOSSARY.md` → **Language** defines **Deals** as above, matching the existing entry format.
-- [ ] No other glossary entries changed.
+- [x] `GLOSSARY.md` → **Language** defines **Deals** as above, matching the existing entry format.
+- [x] No other glossary entries changed.
 
 **Verification:**
-- [ ] Manual check: diff touches only the new term; renders correctly on GitHub
+- [x] Manual check: diff touches only the new term; renders correctly on GitHub
 
 **Dependencies:**
 None (can run in parallel)

@@ -7,6 +7,7 @@
         </a>
         <nav class="eshop-topnav" aria-label="Primary">
             <a class="eshop-topnav-link @(IsCatalog ? "is-current" : "")" href="">Shop all</a>
+            <a class="eshop-topnav-link @(IsDeals ? "is-current" : "")" href="deals">Deals</a>
         </nav>
         <div class="eshop-topbar-actions">
             <UserMenu />
@@ -37,6 +38,7 @@
     // We can use Endpoint Metadata to determine the page currently being visited
     private Type? PageComponentType => HttpContext?.GetEndpoint()?.Metadata.OfType<ComponentTypeMetadata>().FirstOrDefault()?.Type;
     private bool IsCatalog => PageComponentType == typeof(Pages.Catalog.Catalog);
+    private bool IsDeals => PageComponentType == typeof(Pages.Deals.Deals);
     private bool IsItemPage => PageComponentType == typeof(Pages.Item.ItemPage);
 
     // Pages whose content should sit near the top under a shorter hero band.

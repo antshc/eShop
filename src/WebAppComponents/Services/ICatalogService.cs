@@ -8,6 +8,7 @@ namespace eShop.WebAppComponents.Services
     {
         Task<CatalogItem?> GetCatalogItem(int id);
         Task<CatalogResult> GetCatalogItems(int pageIndex, int pageSize, int[]? brands, int[]? types);
+        Task<CatalogResult> GetCheapestCatalogItems(int count);
         Task<List<CatalogItem>> GetCatalogItems(IEnumerable<int> ids);
         Task<CatalogResult> GetCatalogItemsWithSemanticRelevance(int page, int take, string text);
         Task<IEnumerable<CatalogBrand>> GetBrands();

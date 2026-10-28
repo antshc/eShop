@@ -1,0 +1,74 @@
+/* Deals uses its own grid class (not .catalog-items) so catalog-sort.js, which re-sorts
+   .catalog-items by the shopper's saved preference, never reorders the cheapest-first list. */
+.deals {
+    max-width: var(--content-max);
+    margin: 0 auto;
+    padding: 1.25rem var(--page-pad) 4rem;
+}
+
+.deals-items {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 2.5rem 2rem;
+}
+
+.deals-empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    gap: 0.6rem;
+    max-width: 26rem;
+    margin: clamp(2rem, 8vh, 5rem) auto;
+    padding: 2.5rem 1.5rem;
+}
+
+.deals-empty h2 {
+    margin: 0;
+    color: var(--color-ink);
+    font-size: var(--text-xl);
+    font-weight: 700;
+}
+
+.deals-empty p {
+    margin: 0 0 0.75rem;
+    color: var(--color-muted);
+    font-size: var(--text-base);
+    line-height: 1.5;
+}
+
+.deals-card-skeleton {
+    display: flex;
+    flex-direction: column;
+    gap: 0.85rem;
+}
+
+.deals-skeleton-media {
+    aspect-ratio: 1 / 1;
+    border-radius: var(--radius-md);
+    background: var(--color-surface-2);
+}
+
+.deals-skeleton-line {
+    height: 0.85rem;
+    border-radius: var(--radius-pill);
+    background: var(--color-surface-2);
+}
+
+.deals-skeleton-line.short {
+    width: 40%;
+}
+
+@media only screen and (min-width: 481px) and (max-width: 1024px) {
+    .deals-items {
+        grid-template-columns: repeat(2, 1fr);
+        gap: 2rem 1.5rem;
+    }
+}
+
+@media only screen and (max-width: 480px) {
+    .deals-items {
+        grid-template-columns: 1fr;
+        gap: 1.75rem;
+    }
+}
